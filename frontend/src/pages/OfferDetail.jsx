@@ -28,21 +28,26 @@ export default function OfferDetail({ id, user, onSignIn }) {
   }, [load]);
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
-      <header className="flex items-center justify-between gap-4 text-sm">
-        <a href="#/" className="text-neutral-500 hover:text-black">
-          ← All offers
-        </a>
+    <div className="mx-auto max-w-2xl px-6 py-10">
+      <header className="navbar bg-base-200 rounded-box px-4 text-sm">
+        <div className="navbar-start breadcrumbs">
+          <ul>
+            <li><a href="#/">All offers</a></li>
+            <li>Offer</li>
+          </ul>
+        </div>
+        <div className="navbar-end">
         {!user && (
-          <button onClick={onSignIn} className="rounded-md bg-black px-3 py-1.5 text-white hover:bg-neutral-800">
+          <button onClick={onSignIn} className="btn btn-primary btn-sm">
             Sign in
           </button>
         )}
+        </div>
       </header>
-      <div className="mt-6">
-        {error && <p className="text-sm text-red-600">{error === 'Not found' ? 'This offer does not exist.' : error}</p>}
+      <div className="mt-8">
+        {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error === 'Not found' ? 'This offer does not exist.' : error}</span></div>}
         {offer && <OfferCard key={offer.id} offer={offer} user={user} now={now} onChange={load} onSignIn={onSignIn} />}
-        {!offer && !error && <p className="text-sm text-neutral-500">Loading…</p>}
+        {!offer && !error && <span className="loading loading-spinner" />}
       </div>
     </div>
   );
