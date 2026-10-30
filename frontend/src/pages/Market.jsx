@@ -231,7 +231,18 @@ export default function Market({ user, onSignIn, onLogout }) {
 
         {error && <div role="alert" className="alert alert-error alert-soft mt-4 text-sm"><span>{error}</span></div>}
         <div className="mt-8 grid gap-8">
-          {items.length === 0 && <div role="alert" className="alert alert-soft text-sm"><span>Nothing here yet.</span></div>}
+          {items.length === 0 && (
+            <div role="alert" className="alert alert-soft text-sm">
+              <span>
+                Nothing here yet.
+                {views.filter(([k]) => k !== currentView && counts[k] > 0).map(([k, label]) => (
+                  <button key={k} className="link ml-2" onClick={() => setView(k)}>
+                    See {label.toLowerCase()} ({counts[k]})
+                  </button>
+                ))}
+              </span>
+            </div>
+          )}
           {tab === 'offers'
             ? items.map((o) => <OfferCard linked key={o.id} offer={o} user={user} now={now} onChange={load} onSignIn={onSignIn} />)
             : items.map((r) => (
