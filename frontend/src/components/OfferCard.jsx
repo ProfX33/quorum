@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid, withdrawOffer } from '../api';
 import { canRefund } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
-import { UserLink, profileHref } from './UserLink';
+import { UserLink, profileHref, shortKey } from './UserLink';
 
 export { shortKey } from './UserLink';
 
