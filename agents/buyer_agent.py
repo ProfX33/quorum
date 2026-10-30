@@ -51,7 +51,6 @@ class BuyerAgent:
     def __init__(self):
         self.budget_sats = BUDGET_SATS
         self.token: Optional[str] = None
-        self.paid_offers: set[str] = set()
         self.client = genai.Client() if not USE_MOCK_LLM else None
 
     # ---------------------------------------------------------
@@ -148,6 +147,7 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
 2. Käufer geben nur ein geheimes Maximalgebot (`max_price_sats`) ab.
 3. Bei der Abrechnung wird `price` gleichmäßig auf alle Bieter (`payers`) aufgeteilt (Abrunden + Rest auf die höchsten Gebote). `share` zeigt den aktuellen Preis pro Kopf.
 4. Wer ein `max_price_sats` unter dem finalen Anteil hat, geht leer aus. Du zahlst am Ende nie mehr als deinen Anteil (`share`) und nie mehr als dein `max_price_sats`.
+   Dein gesamtes Gebot wird sofort hinterlegt (Pledge); nicht benötigte Sats bekommst du danach zurück.
 5. TRANSAKTIONSGEBÜHREN BEACHTEN: Jede echte BSV-Zahlung kostet ca. {ESTIMATED_FEE_SATS} Sats an Miner-/Wallet-Gebühren!
    - Dein verfügbares Gesamtbudget beträgt aktuell: {self.budget_sats} Sats.
    - Dein Gebot (`max_price_sats`) PLUS {ESTIMATED_FEE_SATS} Sats Gebühr darf dein Budget und deine maximale Zahlungsbereitschaft ({AGENT_MISSION['max_willingness_to_pay_sats']} Sats) NICHT überschreiten.
@@ -220,6 +220,9 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                 resp = requests.post(url, json=payload, headers=self.get_headers(), timeout=5)
                 if resp.status_code in (200, 201):
                     print(f"[Act-Erfolg] Gebot über max. {decision.max_price_sats} Sats für {decision.offer_id} platziert!")
+                    # Nur hinterlegtes Geld zählt zur Deadline, also sofort pledgen.
+                    if self.trigger_bsv_payment(resp.json()["id"], decision.max_price_sats):
+                        self.budget_sats -= decision.max_price_sats + ESTIMATED_FEE_SATS
                 else:
                     print(f"[Act-Info] Backend-Antwort ({resp.status_code}): {resp.text}")
             except Exception as e:
@@ -251,10 +254,10 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                 print(f"[Act-Simulation] Hätte gesendet: POST {url} mit {payload} ({e})")
 
     # ---------------------------------------------------------
-    # SETTLEMENT & BLOCKCHAIN-ZAHLUNG (myBid.status == "won")
+    # ABHOLUNG GELIEFERTER DATEN (gezahlt wird automatisch aus dem Pledge)
     # ---------------------------------------------------------
     def check_settlements_and_pay(self, offers: list[dict]):
-        """Prüft abgerechnete Angebote: gewonnene Anteile pledgen, gelieferte Daten abholen."""
+        """Prüft abgerechnete Angebote: gelieferte Daten abholen, Unbenutztes zurückholen."""
         for offer in offers:
             offer_id = offer.get("id")
             my_bid = offer.get("myBid")
@@ -262,20 +265,17 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                 continue
 
             status = my_bid.get("status")
-            final_amount = my_bid.get("amount")
+            refundable = my_bid.get("refundable", 0)
 
-            if status == "won" and final_amount is not None and offer_id not in self.paid_offers:
-                total_cost = final_amount + ESTIMATED_FEE_SATS
-                print(f"\n[Settlement GEWONNEN!] Offer '{offer.get('name')}' wurde abgerechnet!")
-                print(f"Finaler Gruppen-Anteil: {final_amount} Sats (+ ~{ESTIMATED_FEE_SATS} Sats Netzwerkgebühr)")
+            if refundable > 0:
+                try:
+                    self.cli("refund", my_bid["id"])
+                    self.budget_sats += refundable
+                    print(f"[Rückgabe] {refundable} Sats aus '{offer.get('name')}' zurückgeholt.")
+                except Exception as e:
+                    print(f"[Rückgabe-Warnung] Fehlgeschlagen ({e}).")
 
-                # Blockchain-Zahlung anstoßen
-                if self.trigger_bsv_payment(my_bid["id"], final_amount):
-                    self.budget_sats -= total_cost
-                    self.paid_offers.add(offer_id)
-                    print(f"[State Update] Neues Restbudget nach Abzug von Share & Fees: {self.budget_sats} Sats")
-
-            elif status == "delivered":
+            if status == "delivered":
                 try:
                     saved = self.cli("download", my_bid["id"])
                     print(f"[Lieferung] '{offer.get('name')}' entschlüsselt: {saved['file']} ({saved['bytes']} Bytes)")
@@ -283,7 +283,7 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                     print(f"[Lieferung-Warnung] Download fehlgeschlagen ({e}).")
 
     def trigger_bsv_payment(self, bid_id: str, amount_sats: int) -> bool:
-        """Pledged den Anteil. Die Zahlung geht erst raus, wenn die ganze Gruppe gepledged hat."""
+        """Pledged das Gebot. Die Zahlung geht erst raus, wenn die Gruppe den Preis deckt."""
         print(f"[BSV-Chain] Pledge über {amount_sats} Sats für Gebot {bid_id}...")
         try:
             result = self.cli("pay", bid_id)

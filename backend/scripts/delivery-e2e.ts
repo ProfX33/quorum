@@ -1,14 +1,14 @@
 // End-to-end check of listing → settlement → group payment → delivery → decryption, with
 // agents (ProtoWallet) against a running backend. The backend must use a mock Arcade and
-// WhatsOnChain (started here), so nothing reaches the real network, and a short window:
+// WhatsOnChain (started here), so nothing reaches the real network:
 //   createdb app_test
-//   ARCADE_URL=http://localhost:4199 WOC_URL=http://localhost:4199/woc PAYMENT_WINDOW_MINUTES=0.15 \
+//   ARCADE_URL=http://localhost:4199 WOC_URL=http://localhost:4199/woc \
 //     DATABASE_URL=postgres://app:app@localhost:5432/app_test PORT=4100 bun src/index.ts
 //   API_URL=http://localhost:4100 bun scripts/delivery-e2e.ts
 // It also serves as a reference for how an agent talks to the API.
 import { MerklePath, P2PKH, PrivateKey, ProtoWallet, Transaction, Utils, LockingScript } from "@bsv/sdk";
 import { AUTH_KEY_ID, AUTH_PROTOCOL } from "../src/auth.ts";
-import { paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
+import { PLEDGE_FEE, paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
 
 const api = process.env.API_URL ?? "http://localhost:4100";
 // Must match frontend/src/delivery.js
@@ -88,14 +88,24 @@ const listing = { kind: "data", category: "iot", region: "munich", price: 1000, 
 assert((await seller.call("/api/offers", { body: { ...listing, name: "e2e", deadline: new Date(Date.now() + 60_000).toISOString() } })).status === 400,
   "listing without sellerKeyWrap is refused");
 
-/** Lists an offer, lets the buyers bid, and waits for settlement. */
-async function sale(name: string, bids: [Agent, number][]) {
+/** Lists an offer. */
+async function list(name: string, seconds = 3) {
   const offer = await seller.call("/api/offers", {
-    body: { ...listing, name, sellerKeyWrap: Utils.toHex(sellerKeyWrap), deadline: new Date(Date.now() + 3000).toISOString() },
+    body: { ...listing, name, sellerKeyWrap: Utils.toHex(sellerKeyWrap), deadline: new Date(Date.now() + seconds * 1000).toISOString() },
   });
-  for (const [b, maxPrice] of bids) await b.call(`/api/offers/${offer.id}/bid`, { body: { maxPrice } });
-  const settled = await waitFor(bids[0]![0], offer.id, (o) => o.status !== "open");
-  return { id: offer.id as string, settled };
+  return offer.id as string;
+}
+
+/** Lists an offer, has the buyers bid and pledge their maximum, and waits for settlement. */
+async function sale(name: string, bids: [Agent, number][]) {
+  const id = await list(name, 1 + bids.length);
+  const pledges = [];
+  for (const [b, maxPrice] of bids) {
+    const bid = await b.call(`/api/offers/${id}/bid`, { body: { maxPrice } });
+    pledges.push(await pledge(b, bid.id));
+  }
+  const settled = await waitFor(bids[0]![0], id, (o) => o.status !== "open");
+  return { id, settled, pledges };
 }
 
 async function waitFor(who: Agent, offerId: string, check: (o: any) => boolean, seconds = 40) {
@@ -108,21 +118,25 @@ async function waitFor(who: Agent, offerId: string, check: (o: any) => boolean, 
 }
 
 /** What a BRC-100 wallet's createAction would return; here funded from a made-up mined parent. */
-async function fund(lockingScript: string, satoshis: number) {
+async function fund(lockingScript: string, values: number[]) {
   const funding = PrivateKey.fromRandom();
   const parent = new Transaction();
   parent.addOutput({ lockingScript: new P2PKH().lock(funding.toPublicKey().toHash()), satoshis: 50_000 });
   parent.merklePath = new MerklePath(1, [[{ offset: 0, hash: parent.id("hex"), txid: true }]]);
   const tx = new Transaction();
   tx.addInput({ sourceTransaction: parent, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(funding) });
-  tx.addOutput({ lockingScript: LockingScript.fromHex(lockingScript), satoshis });
-  tx.addOutput({ lockingScript: new P2PKH().lock(funding.toPublicKey().toHash()), satoshis: 49_000 - satoshis });
+  for (const satoshis of values) tx.addOutput({ lockingScript: LockingScript.fromHex(lockingScript), satoshis });
+  const total = values.reduce((sum, v) => sum + v, 0);
+  tx.addOutput({ lockingScript: new P2PKH().lock(funding.toPublicKey().toHash()), satoshis: 49_000 - total });
   await tx.sign();
   pledgeTxids.add(tx.id("hex"));
   return tx;
 }
 
-/** The buyer's side of a pledge: check the group outputs, lock the share, sign it for the group. */
+const signAll = (b: Agent, keyID: string, outputs: any, tx: Transaction, vouts: number[]) =>
+  Promise.all(vouts.map(async (vout) => ({ vout, unlockingScript: await signPledge(b.wallet, keyID, outputs, tx, vout) })));
+
+/** The buyer's side of a pledge: check the group outputs, lock the maximum, sign each output for the group. */
 async function pledge(b: Agent, bidId: string) {
   const req = await b.call(`/api/bids/${bidId}/payment`);
   if (req.error) return req;
@@ -131,10 +145,19 @@ async function pledge(b: Agent, bidId: string) {
   if (req.groupOutputs[0].lockingScript !== sellerScript || req.groupOutputs[0].satoshis !== req.price) {
     throw new Error("The group payment does not pay the seller the price");
   }
-  const tx = await fund(await pledgeLockingScript(b.wallet, req.keyID), req.satoshis);
-  const unlockingScript = await signPledge(b.wallet, req.keyID, req.groupOutputs, tx, 0);
-  const body = { beef: Utils.toHex(tx.toAtomicBEEF()), vout: 0, unlockingScript, keyID: req.keyID };
+  const tx = await fund(await pledgeLockingScript(b.wallet, req.keyID), req.outputs);
+  const pledges = await signAll(b, req.keyID, req.groupOutputs, tx, req.outputs.map((_: number, i: number) => i));
+  const body = { beef: Utils.toHex(tx.toAtomicBEEF()), pledges, keyID: req.keyID };
   return { ...(await b.call(`/api/bids/${bidId}/payment`, { body })), tx, body };
+}
+
+/** Takes back everything refundable and returns the refund transaction. */
+async function refund(b: Agent, bidId: string) {
+  const r = await b.call(`/api/bids/${bidId}/refund`);
+  const to = await paymentLockingScript(b.identityKey, "cmVmdW5k", "dGVzdA==");
+  const pledges = r.pledges.map((p: any) => ({ tx: Transaction.fromAtomicBEEF(Utils.toArray(p.beef, "hex")), vout: p.vout, keyID: p.keyID }));
+  const tx = await refundTransaction(b.wallet, pledges, to, r.fee);
+  return { tx, ...(await b.call(`/api/bids/${bidId}/refund`, { body: { beef: Utils.toHex(tx.toAtomicBEEF()) } })) };
 }
 
 async function deliver(t: any) {
@@ -162,120 +185,156 @@ async function decrypt(b: Agent, bidId: string, offerId: string) {
 const claimOf = async (offerId: string) => (await seller.call("/api/seller/tasks")).tasks.find((t: any) => t.claim && t.offerId === offerId);
 const groupPayment = (claim: any) => Transaction.fromAtomicBEEF(Utils.toArray(claim.claim.beef, "hex"));
 
-// ---------- 1. both buyers pledge: one payment of the full price, both get the data ----------
+// ---------- 1. both buyers pledge up front: paid at the deadline with nobody acting ----------
 console.log("\n# group pays in full");
 {
-  const { id, settled } = await sale("e2e group", [[alice, 1500], [bob, 1500]]);
-  const a = settled.myBid;
-  assert(settled.status === "sold" && a.status === "won" && a.amount === 500, "alice won and owes half the price");
-  const b = (await bob.call(`/api/offers/${id}`)).offer.myBid;
+  const id = await list("e2e group", 4);
+  const before = await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 600 } });
+  const bobBid = await bob.call(`/api/offers/${id}/bid`, { body: { maxPrice: 700 } });
+  assert((await alice.call(`/api/offers/${id}`)).offer.bidCount === 0, "a bid does not count until it is pledged");
 
-  const badRequest = await alice.call(`/api/bids/${a.id}/payment`);
-  const stray = await fund(await pledgeLockingScript(alice.wallet, badRequest.keyID), badRequest.satoshis);
+  const badRequest = await alice.call(`/api/bids/${before.id}/payment`);
+  assert(badRequest.due === 600 && badRequest.outputs.length === 10, "the maximum is pledged in denominations");
+  const script = await pledgeLockingScript(alice.wallet, badRequest.keyID);
+  const lump = await fund(script, [600 + PLEDGE_FEE]);
+  assert((await alice.call(`/api/bids/${before.id}/payment`, { body: {
+    beef: Utils.toHex(lump.toAtomicBEEF()), keyID: badRequest.keyID,
+    pledges: await signAll(alice, badRequest.keyID, badRequest.groupOutputs, lump, [0]),
+  } })).status === 400, "a lump sum, which would burn the excess, is refused");
+  const stray = await fund(script, [1 + PLEDGE_FEE]);
   const wrongOutputs = [{ ...badRequest.groupOutputs[0], satoshis: 1 }, badRequest.groupOutputs[1]];
-  assert((await alice.call(`/api/bids/${a.id}/payment`, { body: {
-    beef: Utils.toHex(stray.toAtomicBEEF()), vout: 0, keyID: badRequest.keyID,
-    unlockingScript: await signPledge(alice.wallet, badRequest.keyID, wrongOutputs, stray, 0),
+  assert((await alice.call(`/api/bids/${before.id}/payment`, { body: {
+    beef: Utils.toHex(stray.toAtomicBEEF()), keyID: badRequest.keyID,
+    pledges: await signAll(alice, badRequest.keyID, wrongOutputs, stray, [0]),
   } })).status === 400, "a pledge signed for other outputs is refused");
 
-  const first = await pledge(alice, a.id);
-  assert(first.status === "pledged", "alice's pledge covers her share");
-  assert((await alice.call(`/api/bids/${a.id}/payment`, { body: first.body })).status === "pledged", "re-submitting a pledge is idempotent");
-  assert((await bob.call(`/api/bids/${a.id}/payment`, { body: first.body })).status === 404, "nobody else can submit it");
+  const first = await pledge(alice, before.id);
+  assert(first.status === "open" && first.pledged === 600, "alice has pledged her maximum");
+  assert((await alice.call(`/api/bids/${before.id}/payment`, { body: first.body })).pledged === 600, "re-submitting a pledge is idempotent");
+  assert((await alice.call(`/api/bids/${before.id}/payment`)).status === 409, "there is nothing more to pledge");
+  assert((await bob.call(`/api/bids/${before.id}/payment`, { body: first.body })).status === 404, "nobody else can submit it");
+  assert((await alice.call(`/api/bids/${before.id}/refund`)).status === 409, "alice cannot take her pledge back while it backs her bid");
   const half = (await alice.call(`/api/offers/${id}`)).offer;
-  assert(!half.groupPayment.txid && half.groupPayment.pledged === 1 && half.groupPayment.members === 2, "no payment while bob has not pledged");
+  assert(half.bidCount === 1 && half.myBid.pledged === 600, "her bid counts now");
   assert(!(await claimOf(id)), "the seller gets nothing to claim yet");
-  assert((await alice.call(`/api/bids/${a.id}/delivery`)).status === 409, "and alice gets no key");
-  assert((await alice.call(`/api/bids/${a.id}/refund`)).status === 409, "alice cannot take her pledge back while in the group");
+  assert((await alice.call(`/api/bids/${before.id}/delivery`)).status === 409, "and alice gets no key");
+  assert((await pledge(bob, bobBid.id)).pledged === 700, "bob pledges his maximum");
 
-  assert((await pledge(bob, b.id)).status === "paid", "bob's pledge completes the group payment");
   const paid = await waitFor(alice, id, (o) => o.myBid.paymentSeen);
-  assert(paid.myBid.status === "paid" && paid.groupPayment.seen, "group payment seen on the network");
+  assert(paid.status === "sold" && paid.myBid.status === "paid" && paid.myBid.amount === 500 && paid.groupPayment.seen,
+    "after the deadline the group payment is on the network, and nobody signed anything");
+  assert(paid.myBid.refundable === 100 + 3 * PLEDGE_FEE, "what alice's share did not need stays hers");
 
   const claim = await claimOf(id);
   const tx = groupPayment(claim);
-  assert(claim.amount === 1000 && tx.outputs[claim.claim.outputIndex]!.satoshis === 1000 && tx.inputs.length === 2,
-    "one transaction with both pledges pays the seller the full price");
+  assert(claim.amount === 1000 && tx.outputs[claim.claim.outputIndex]!.satoshis === 1000, "one transaction pays the seller the full price");
+  assert(tx.getFee() === tx.inputs.length * PLEDGE_FEE, "only the fee contributions reach the miners, not the excess");
   assert(tx.id("hex") === paid.groupPayment.txid, "the claim is the broadcast group payment");
   assert((await seller.call(`/api/offers/${id}/claimed`, { body: {} })).ok, "group payment claimed once");
   assert(!(await claimOf(id)), "nothing left to claim");
+  const back = await refund(alice, before.id);
+  assert(back.tx.outputs[0]!.satoshis === 100, "alice takes the rest of her maximum back");
 
   const deliveries = (await seller.call("/api/seller/tasks")).tasks.filter((t: any) => t.deliver && t.offerId === id);
   assert(deliveries.length === 2, "a delivery task per buyer");
   for (const t of deliveries) assert((await deliver(t)).ok, "key delivered");
-  assert((await decrypt(alice, a.id, id)) === new TextDecoder().decode(plaintext), "alice decrypts the original data");
-  assert((await decrypt(bob, b.id, id)) === new TextDecoder().decode(plaintext), "bob decrypts the original data");
+  assert((await decrypt(alice, before.id, id)) === new TextDecoder().decode(plaintext), "alice decrypts the original data");
+  assert((await decrypt(bob, bobBid.id, id)) === new TextDecoder().decode(plaintext), "bob decrypts the original data");
 
   // A failed decryption sends the bid back to the seller for another delivery.
-  assert((await alice.call(`/api/bids/${a.id}/receipt`, { body: { ok: false, reason: "test" } })).status === "paid", "failure asks for redelivery");
-  const again = (await seller.call("/api/seller/tasks")).tasks.find((t: any) => t.bidId === a.id);
+  assert((await alice.call(`/api/bids/${before.id}/receipt`, { body: { ok: false, reason: "test" } })).status === "paid", "failure asks for redelivery");
+  const again = (await seller.call("/api/seller/tasks")).tasks.find((t: any) => t.bidId === before.id);
   assert(again?.deliver && !(await claimOf(id)), "redelivery task, payment not claimed twice");
   assert((await deliver(again)).ok, "key delivered again");
-  assert((await alice.call(`/api/bids/${a.id}/receipt`, { body: { ok: true } })).status === "received", "alice confirms receipt");
+  assert((await alice.call(`/api/bids/${before.id}/receipt`, { body: { ok: true } })).status === "received", "alice confirms receipt");
   assert((await seller.call(`/api/offers/${id}`)).offer.sales?.received === 1, "seller sees the completed sale");
 }
 
-// ---------- 2. bob never pledges: alice is regrouped, tops up, and pays the full price ----------
-console.log("\n# a member defaults");
+// ---------- 2. a troll bids high and never pays: it changes nothing ----------
+console.log("\n# a bid without money");
 {
-  const { id, settled } = await sale("e2e default", [[alice, 1500], [bob, 1500]]);
-  const a = settled.myBid;
-  assert((await pledge(alice, a.id)).status === "pledged", "alice pledges her half");
-  const regrouped = await waitFor(alice, id, (o) => o.myBid.status === "won" && o.myBid.amount === 1000);
-  assert(regrouped.myBid.status === "won" && regrouped.myBid.pledged === 500, "after the window alice owes the whole price, her pledge still counts");
-  assert((await bob.call(`/api/offers/${id}`)).offer.myBid.status === "defaulted", "bob is dropped");
-  assert((await bob.call(`/api/bids/${(await bob.call(`/api/offers/${id}`)).offer.myBid.id}/refund`)).status === 409, "bob has nothing to refund");
-  const topUp = await pledge(alice, a.id);
-  assert(topUp.status === "paid", "alice's top-up completes the payment");
-  const claim = await claimOf(id);
-  assert(claim && groupPayment(claim).outputs[0]!.satoshis === 1000 && groupPayment(claim).inputs.length === 2,
-    "the seller still gets the full price, from both of alice's pledges");
+  const id = await list("e2e troll", 3);
+  const troll = await bob.call(`/api/offers/${id}/bid`, { body: { maxPrice: 100_000 } });
+  const honest = await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 1000 } });
+  await pledge(alice, honest.id);
+  const paid = await waitFor(alice, id, (o) => o.myBid.paymentSeen);
+  assert(paid.myBid.amount === 1000 && paid.myBid.status === "paid", "the unfunded bid is ignored and alice pays without waiting for anyone");
+  assert((await bob.call(`/api/offers/${id}`)).offer.myBid.status === "lost", "the troll is out");
+  assert((await bob.call(`/api/bids/${troll.id}/payment`)).status === 409, "and it is too late to pledge");
 }
 
 // ---------- 3. nobody can cover the price: the offer fails and alice takes her pledge back ----------
 console.log("\n# the group fails");
 {
-  const { id, settled } = await sale("e2e fail", [[alice, 600], [bob, 600]]);
+  const { id, settled, pledges: [p] } = await sale("e2e fail", [[alice, 300], [bob, 300]]);
   const a = settled.myBid;
-  const p = await pledge(alice, a.id);
-  assert(p.status === "pledged", "alice pledges her half");
-  const failed = await waitFor(alice, id, (o) => o.status === "unsold");
-  assert(failed.status === "unsold" && failed.myBid.status === "lost", "alone alice cannot afford the price: the offer fails");
-  assert(failed.myBid.refundable === 530 && !(await claimOf(id)), "the seller gets nothing and alice can take back 530 sats");
+  assert(p.pledged === 300, "alice pledged her maximum");
+  assert(settled.status === "unsold" && a.status === "lost", "the group cannot afford the price: the offer fails");
+  assert(a.refundable === 300 + p.body.pledges.length * PLEDGE_FEE && !(await claimOf(id)), "the seller gets nothing and alice can take back her pledge");
 
-  const refund = await alice.call(`/api/bids/${a.id}/refund`);
-  assert(refund.pledges?.length === 1, "refund lists her pledge");
+  const partial = await alice.call(`/api/bids/${a.id}/refund`);
+  assert(partial.pledges?.length === p.body.pledges.length, "refund lists all her outputs");
   const to = await paymentLockingScript(alice.identityKey, "cmVmdW5k", "dGVzdA==");
-  const pledges = refund.pledges.map((r: any) => ({ tx: Transaction.fromAtomicBEEF(Utils.toArray(r.beef, "hex")), vout: r.vout, keyID: r.keyID }));
-  const tx = await refundTransaction(alice.wallet, pledges, to, refund.fee);
-  assert(tx.outputs[0]!.satoshis === 500, "refund returns the pledge less the fee");
-  const someoneElse = await refundTransaction(bob.wallet, pledges, to, refund.fee);
+  const pledges = partial.pledges.map((r: any) => ({ tx: Transaction.fromAtomicBEEF(Utils.toArray(r.beef, "hex")), vout: r.vout, keyID: r.keyID }));
+  const someoneElse = await refundTransaction(bob.wallet, pledges, to, partial.fee);
   assert((await alice.call(`/api/bids/${a.id}/refund`, { body: { beef: Utils.toHex(someoneElse.toAtomicBEEF()) } })).status === 400,
     "a refund not signed by the pledge key is refused");
+  const subset = await refundTransaction(alice.wallet, pledges.slice(0, 2), to, 2 * PLEDGE_FEE);
+  assert((await alice.call(`/api/bids/${a.id}/refund`, { body: { beef: Utils.toHex(subset.toAtomicBEEF()) } })).status === 400,
+    "a refund must take back all of it");
+  const tx = await refundTransaction(alice.wallet, pledges, to, partial.fee);
+  assert(tx.outputs[0]!.satoshis === 300, "refund returns the pledge less the fee");
   const done = await alice.call(`/api/bids/${a.id}/refund`, { body: { beef: Utils.toHex(tx.toAtomicBEEF()) } });
   assert(done.txid === tx.id("hex"), "refund broadcast");
   assert((await alice.call(`/api/bids/${a.id}/refund`, { body: { beef: Utils.toHex(tx.toAtomicBEEF()) } })).txid === done.txid, "re-submitting is idempotent");
   assert((await alice.call(`/api/offers/${id}`)).offer.myBid.refundable === 0, "nothing left to refund");
 }
 
-// ---------- 4. alice double-spends her pledge: the payment is rejected, only alice must pledge again ----------
+// ---------- 4. alice double-spends her pledge: she is dropped, bob pays without doing anything ----------
 console.log("\n# a pledge is spent elsewhere");
 {
-  const { id, settled } = await sale("e2e reject", [[alice, 1500], [bob, 1500]]);
-  const a = settled.myBid;
-  const b = (await bob.call(`/api/offers/${id}`)).offer.myBid;
   rejectGroups = true;
-  const p = await pledge(alice, a.id);
-  spent.set(`${p.tx.id("hex")}:0`, "ff".repeat(32));
-  assert((await pledge(bob, b.id)).status === "paid", "group payment built while the network has not decided");
-  const undone = await waitFor(alice, id, (o) => o.myBid.status === "won");
-  assert(undone.myBid.status === "won" && undone.myBid.pledged === 0 && /rejected/.test(undone.myBid.paymentError),
-    "rejected payment is undone, alice's spent pledge no longer counts");
-  assert((await bob.call(`/api/offers/${id}`)).offer.myBid.status === "pledged", "bob's pledge stays in place");
-  assert(!(await claimOf(id)), "the seller gets no task for it");
+  const { id, settled, pledges: [p] } = await sale("e2e reject", [[alice, 1500], [bob, 1500]]);
+  const a = settled.myBid;
+  for (const { vout } of p.body.pledges) spent.set(`${p.tx.id("hex")}:${vout}`, "ff".repeat(32));
+  const undone = await waitFor(alice, id, (o) => o.myBid.status === "defaulted");
+  assert(undone.myBid.status === "defaulted" && !undone.myBid.paymentSeen, "the rejected payment is undone and alice is out");
   rejectGroups = false;
-  assert((await pledge(alice, a.id)).status === "paid", "alice pledges again and the group pays");
-  assert((await waitFor(bob, id, (o) => o.myBid.paymentSeen)).myBid.status === "paid", "group payment seen on the network");
+  const paid = await waitFor(bob, id, (o) => o.myBid.paymentSeen);
+  assert(paid.myBid.status === "paid" && paid.myBid.amount === 1000, "bob is regrouped at once and his pledge pays the whole price, unsigned by him");
+  const claim = await claimOf(id);
+  assert(claim && groupPayment(claim).outputs[0]!.satoshis === 1000, "the seller still gets the full price");
+  const left = await alice.call(`/api/bids/${a.id}/refund`);
+  const usedOnes = new Set(groupPayment(claim).inputs.map((i) => `${i.sourceTXID ?? i.sourceTransaction?.id("hex")}:${i.sourceOutputIndex}`));
+  assert(left.pledges.every((r: any) => !usedOnes.has(`${r.txid}:${r.vout}`)) && left.pledges.length < p.body.pledges.length,
+    "only outputs of hers that were never part of a payment are still listed");
+}
+
+// ---------- 5. changing your mind before the deadline ----------
+console.log("\n# withdrawing");
+{
+  const id = await list("e2e withdraw", 6);
+  const a = await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 400 } });
+  await pledge(alice, a.id);
+  await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 1000 } });
+  const topUp = await pledge(alice, a.id);
+  assert(topUp.pledged === 1000, "raising the maximum pledges the difference");
+  assert((await alice.call(`/api/offers/${id}/bid`, { method: "DELETE" })).ok, "alice withdraws");
+  const out = (await alice.call(`/api/offers/${id}`)).offer;
+  assert(out.bidCount === 0 && out.myBid.status === "lost" && out.myBid.refundable > 1000, "her bid no longer counts and her pledge is refundable");
+  assert((await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 1000 } })).id === a.id, "she can come back");
+  const paid = await waitFor(alice, id, (o) => o.myBid.paymentSeen);
+  assert(paid.myBid.amount === 1000, "and two pledges together pay the exact share");
+
+  const pulled = await list("e2e pulled", 30);
+  const b = await bob.call(`/api/offers/${pulled}/bid`, { body: { maxPrice: 200 } });
+  const unfunded = await alice.call(`/api/offers/${pulled}/bid`, { body: { maxPrice: 200 } });
+  await pledge(bob, b.id);
+  assert((await seller.call(`/api/offers/${pulled}`, { method: "DELETE" })).ok, "the seller withdraws a funded offer");
+  const gone = (await bob.call(`/api/offers/${pulled}`)).offer;
+  assert(gone.status === "unsold" && gone.myBid.status === "lost", "it stays on record");
+  assert((await refund(bob, b.id)).tx.outputs[0]!.satoshis === 200, "bob takes his pledge back");
+  assert((await alice.call(`/api/bids/${unfunded.id}/payment`)).status === 409, "and nobody can pledge to it any more");
 }
 
 console.log("\nAll delivery checks passed.");

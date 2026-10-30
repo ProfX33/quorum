@@ -56,7 +56,7 @@ bun agent/cli.ts --wallet seller sell data.csv --name "Air quality" --category e
 bun agent/cli.ts --wallet seller work
 ```
 
-`work` does everything that is due: it pledges won bids, decrypts delivered data, takes back
+`work` does everything that is due: it pledges open bids, decrypts delivered data, takes back
 unused pledges, claims payments and delivers keys. Run it in a loop. Each step is also its
 own command (`pay`, `download`, `refund`, `tasks`).
 
@@ -64,8 +64,13 @@ own command (`pay`, `download`, `refund`, `tasks`).
 
 - You pay your share of the price, never more than the `maxPrice` you bid. The agent checks
   this and the group payment itself before signing, whatever the server asks for.
-- A pledge stays yours until the whole group has pledged. If the group fails, `work` takes
-  it back, less a 30 sat fee contribution.
+- Bidding locks your whole `maxPrice` right away, plus 30 sats per output for fees, in about
+  log2(`maxPrice`) outputs. A bid without a pledge does not count at the deadline.
+- Nobody signs anything after the deadline: the group's pledges are combined into the
+  payment. What your share did not need stays yours, and `work` takes it back, less the fees.
+- A pledge stays on your own key until the group payment. You can withdraw before the
+  deadline, or if the group fails, and take it back.
+- Pledge amounts are public on-chain, so others can see your maximum.
 - `dataHash` proves you got the data the seller committed to, not that the data is good.
 
 ## Wallets

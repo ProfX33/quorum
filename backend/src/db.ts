@@ -97,13 +97,16 @@ export async function migrate() {
       -- winners must pay before this, set at settlement
       ADD COLUMN IF NOT EXISTS payment_deadline timestamptz`;
 
-  // Bid lifecycle after settlement (see delivery.ts; the group pays in one transaction):
-  //   won → pledged (the buyer's pledges cover their share)
-  //   pledged → paid (every member pledged; the group payment is built and broadcast)
+  // Bid lifecycle (see delivery.ts; the group pays in one transaction):
+  //   open: the buyer pledges their maximum while bidding; only pledged money takes part
+  //   open → pledged (in the payment group at the deadline) or lost (withdrawn, not in it)
+  //   pledged → paid (the group payment is built and broadcast, nobody has to act)
   //   paid → delivered (key wrapped for the buyer) → received
-  //   won → defaulted (window missed); the others are regrouped with new shares, or the
-  //     offer fails and they become lost. Pledges not used in a payment can be refunded.
+  //   paid → defaulted (spent their pledge elsewhere, so the network rejected the payment);
+  //     the others are regrouped at once with new shares, or the offer fails and they
+  //     become lost. Pledges not used in a payment can be refunded.
   //   delivered → paid again when the buyer cannot decrypt, until disputed after 3 attempts
+  //   ('won' is from when buyers pledged after the deadline.)
   // (The per-bid payment_* columns are from when each buyer paid separately.)
   await sql`
     ALTER TABLE buy_offers
@@ -166,4 +169,18 @@ export async function migrate() {
     )`;
   await sql`CREATE INDEX IF NOT EXISTS pledges_bid ON pledges (bid_id)`;
   await sql`ALTER TABLE pledges ADD COLUMN IF NOT EXISTS refunded_at timestamptz`;
+
+  // Pledges are signed while bidding, so an open offer needs its group payment key already.
+  await sql`
+    UPDATE sell_offers SET
+      payment_prefix = encode(decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'base64'),
+      payment_suffix = encode(decode(replace(gen_random_uuid()::text, '-', ''), 'hex'), 'base64')
+    WHERE status = 'open' AND payment_prefix IS NULL`;
+  // Sales still waiting for buyers to pledge after their deadline end here; pledges stay refundable.
+  await sql`
+    UPDATE sell_offers s SET status = 'unsold' WHERE s.status = 'sold' AND s.payment_txid IS NULL
+      AND EXISTS (SELECT 1 FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'won')`;
+  await sql`
+    UPDATE buy_offers b SET status = 'lost' FROM sell_offers s
+    WHERE s.id = b.sell_offer_id AND s.status = 'unsold' AND b.status IN ('won', 'pledged')`;
 }

@@ -15,6 +15,7 @@ import {
   signPledge,
   tagLockingScript,
 } from "./payments.ts";
+import { denominations, pickDenominations } from "./settlement.ts";
 
 const seller = PrivateKey.fromRandom();
 const sellerKey = seller.toPublicKey().toString();
@@ -38,6 +39,22 @@ async function pledge(satoshis: number, keyID = "bid 0") {
   return { wallet, keyID, tx, beef: tx.toAtomicBEEF() };
 }
 
+/** A pledge of a whole maximum, in one output per denomination. */
+async function denominatedPledge(max: number) {
+  const wallet = new ProtoWallet(PrivateKey.fromRandom());
+  const keyID = "bid 0";
+  const funding = PrivateKey.fromRandom();
+  const parent = new Transaction();
+  parent.addOutput({ lockingScript: new P2PKH().lock(funding.toPublicKey().toHash()), satoshis: 10_000 });
+  parent.merklePath = new MerklePath(1, [[{ offset: 0, hash: parent.id("hex"), txid: true }]]);
+  const tx = new Transaction();
+  tx.addInput({ sourceTransaction: parent, sourceOutputIndex: 0, unlockingScriptTemplate: new P2PKH().unlock(funding) });
+  const lockingScript = LockingScript.fromHex(await pledgeLockingScript(wallet, keyID));
+  for (const v of denominations(max)) tx.addOutput({ lockingScript, satoshis: v + PLEDGE_FEE });
+  await tx.sign();
+  return { wallet, keyID, tx, beef: tx.toAtomicBEEF() };
+}
+
 describe("paymentLockingScript", () => {
   test("is the key the seller's wallet derives when internalizing from the anyone sender", async () => {
     const script = await paymentLockingScript(sellerKey, prefix, suffix);
@@ -54,35 +71,52 @@ describe("paymentLockingScript", () => {
 });
 
 describe("parsePledge", () => {
-  test("accepts a pledge signed for the group outputs", async () => {
-    const p = await pledge(500 + PLEDGE_FEE);
-    const unlock = await signPledge(p.wallet, p.keyID, outputs, p.tx, 0);
-    const result = await parsePledge(p.beef, 0, unlock, outputs);
+  const signed = async (p: Awaited<ReturnType<typeof pledge>>, vouts: number[], outs = outputs) =>
+    Promise.all(vouts.map(async (vout) => ({ vout, unlockingScript: await signPledge(p.wallet, p.keyID, outs, p.tx, vout) })));
+
+  test("accepts a pledge split into denominations, each output signed for the group outputs", async () => {
+    const p = await denominatedPledge(500);
+    const vouts = denominations(500).map((_, i) => i);
+    const result = await parsePledge(p.beef, await signed(p, vouts), outputs);
     expect("error" in result).toBe(false);
     if ("error" in result) return;
-    expect(result.satoshis).toBe(500 + PLEDGE_FEE);
+    expect(result.outputs.reduce((sum, o) => sum + o.satoshis - PLEDGE_FEE, 0)).toBe(500);
+  });
+
+  test("rejects a lump sum, which could not pay a smaller share without burning the rest", async () => {
+    const p = await pledge(500 + PLEDGE_FEE);
+    expect(await parsePledge(p.beef, await signed(p, [0]), outputs)).toHaveProperty("error");
+  });
+
+  test("rejects one output listed twice", async () => {
+    const p = await pledge(1 + PLEDGE_FEE);
+    expect(await parsePledge(p.beef, await signed(p, [0, 0]), outputs)).toHaveProperty("error");
   });
 
   test("rejects a signature for other outputs, a wrong key, or a plain SIGHASH_ALL", async () => {
-    const p = await pledge(500 + PLEDGE_FEE);
+    const p = await pledge(1 + PLEDGE_FEE);
     const other = await groupOutputs(sellerKey, prefix, derivationNonce(), "offer-1", PRICE);
-    expect(await parsePledge(p.beef, 0, await signPledge(p.wallet, p.keyID, other, p.tx, 0), outputs)).toHaveProperty("error");
-    expect(await parsePledge(p.beef, 0, await signPledge(p.wallet, "bid 1", outputs, p.tx, 0), outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, await signed(p, [0], other), outputs)).toHaveProperty("error");
+    const wrongKey = await signPledge(p.wallet, "bid 1", outputs, p.tx, 0);
+    expect(await parsePledge(p.beef, [{ vout: 0, unlockingScript: wrongKey }], outputs)).toHaveProperty("error");
 
     const all = groupTransaction(outputs, [{ sourceTransaction: p.tx, vout: 0 }]);
     const key = new KeyDeriver((p.wallet as any).keyDeriver.rootKey).derivePrivateKey(
       [2, "datamarket pledge"], p.keyID, "self");
     all.inputs[0]!.unlockingScriptTemplate = new P2PKH().unlock(key);
     await all.sign();
-    expect(await parsePledge(p.beef, 0, all.inputs[0]!.unlockingScript!.toHex(), outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, [{ vout: 0, unlockingScript: all.inputs[0]!.unlockingScript!.toHex() }], outputs)).toHaveProperty("error");
   });
 
   test("rejects garbage and the change output", async () => {
-    const p = await pledge(500 + PLEDGE_FEE);
-    const unlock = await signPledge(p.wallet, p.keyID, outputs, p.tx, 0);
-    expect(await parsePledge([1, 2, 3], 0, unlock, outputs)).toHaveProperty("error");
-    expect(await parsePledge(p.beef, 1, unlock, outputs)).toHaveProperty("error");
-    expect(await parsePledge(p.beef, 0, "zz", outputs)).toHaveProperty("error");
+    const p = await pledge(1 + PLEDGE_FEE);
+    const [good] = await signed(p, [0]);
+    expect(await parsePledge([1, 2, 3], [good], outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, [{ ...good!, vout: 1 }], outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, [{ vout: 0, unlockingScript: "zz" }], outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, [], outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, "nope", outputs)).toHaveProperty("error");
+    expect(await parsePledge(p.beef, [null], outputs)).toHaveProperty("error");
   });
 });
 
@@ -114,6 +148,21 @@ describe("group transaction", () => {
     expect(spendsAll(tx)).toBe(true);
     expect(tx.outputs[0]!.satoshis).toBe(PRICE);
     expect(tx.getFee()).toBe(2 * PLEDGE_FEE);
+  });
+
+  test("a share is paid exactly from a bigger maximum: only the fee contributions reach the miners", async () => {
+    const bids = await Promise.all([700, 400].map(denominatedPledge));
+    const share = [600, 400];
+    const inputs = await Promise.all(bids.flatMap((p, b) => {
+      const values = p.tx.outputs.map((o) => o.satoshis! - PLEDGE_FEE);
+      return pickDenominations(values, share[b]!)!.map(async (vout) => ({
+        sourceTransaction: p.tx, vout, unlockingScript: await signPledge(p.wallet, p.keyID, outputs, p.tx, vout),
+      }));
+    }));
+    const tx = groupTransaction(outputs, inputs);
+    expect(spendsAll(tx)).toBe(true);
+    expect(tx.outputs[0]!.satoshis).toBe(PRICE);
+    expect(tx.getFee()).toBe(inputs.length * PLEDGE_FEE);
   });
 
   test("one pledge alone cannot pay: the outputs exceed its value", async () => {

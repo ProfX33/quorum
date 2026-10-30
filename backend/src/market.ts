@@ -1,12 +1,13 @@
 import { sql } from "./db.ts";
 import { PLEDGE_FEE, derivationNonce, txUrl } from "./payments.ts";
 import { person } from "./profiles.ts";
-import { findPaymentGroup } from "./settlement.ts";
+import { type Bid, findPaymentGroup } from "./settlement.ts";
 
 export const KINDS = ["data", "service", "product"] as const;
 type Kind = (typeof KINDS)[number];
 
 const MAX_DEADLINE_MS = 365 * 24 * 60 * 60 * 1000;
+// How long a settled group has for its payment to get built before it is given up.
 const PAYMENT_WINDOW_MINUTES = Number(process.env.PAYMENT_WINDOW_MINUTES ?? 60);
 
 /** End of a payment window starting now. */
@@ -71,7 +72,7 @@ const exact = (v: string | null | undefined) => (v?.trim() ? v.trim() : null);
 const toOffer = (row: any, userId: string | null) => {
   const price = Number(row.price);
   const maxima: number[] = (typeof row.bid_maxima === "string" ? JSON.parse(row.bid_maxima) : row.bid_maxima).map(Number);
-  // Preview of the deadline algorithm on the current bids; individual maxima stay private.
+  // Preview of the deadline algorithm on the funded bids; individual maxima stay private.
   const group = row.status === "open" ? findPaymentGroup(price, maxima.map((maxPrice, i) => ({ id: String(i), maxPrice }))) : null;
   return {
     id: row.id,
@@ -96,7 +97,7 @@ const toOffer = (row: any, userId: string | null) => {
     sellerKind: row.seller_kind,
     createdAt: new Date(row.created_at).toISOString(),
     settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
-    bidCount: maxima.length,
+    bidCount: row.status === "open" ? maxima.length : Number(row.bid_count),
     payers: row.status === "open" ? (group?.length ?? 0) : Number(row.winner_count),
     share: group ? group[0]!.amount : null,
     // The group payment: members still to pledge, and the transaction once it is built.
@@ -135,7 +136,12 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
   const status = filters.status === "all" || ["sold", "unsold"].includes(filters.status ?? "") ? filters.status! : "open";
   const rows = await sql`
     SELECT s.*, u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at, u.kind AS seller_kind,
-      COALESCE((SELECT json_agg(b.max_price ORDER BY b.created_at) FROM buy_offers b WHERE b.sell_offer_id = s.id), '[]') AS bid_maxima,
+      COALESCE((SELECT json_agg(f.funded ORDER BY f.created_at) FROM (
+        SELECT b.created_at, LEAST(b.max_price, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
+                                 WHERE p.bid_id = b.id AND p.status = 'active'), 0)) AS funded
+        FROM buy_offers b
+        WHERE b.sell_offer_id = s.id AND b.status = 'open') f WHERE f.funded > 0), '[]') AS bid_maxima,
+      (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id) AS bid_count,
       COALESCE((SELECT json_agg(json_build_object(
           'key', bu.identity_key, 'name', bu.display_name, 'avatarAt', bu.avatar_updated_at, 'status', b.status)
           ORDER BY b.created_at)
@@ -151,7 +157,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
       my.dispute_reason AS my_dispute_reason,
       (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = my.id AND p.status IN ('active', 'used')) AS my_credited,
       (SELECT sum(p.satoshis) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
-         AND my.status NOT IN ('won', 'pledged')) AS my_refundable
+         AND my.status NOT IN ('open', 'won', 'pledged')) AS my_refundable
     FROM sell_offers s
     JOIN users u ON u.id = s.seller_id
     LEFT JOIN data_files f ON f.hash = s.data_hash
@@ -199,10 +205,11 @@ export async function createOffer(sellerId: string, body: Record<string, unknown
       if (listing.deadline > new Date(request.deadline)) return { error: "Deadline must not be after the request's deadline" };
     }
     const [row] = await tx`
-      INSERT INTO sell_offers (seller_id, kind, category, region, name, description, price, deadline, data_hash, seller_key_wrap)
+      INSERT INTO sell_offers (seller_id, kind, category, region, name, description, price, deadline, data_hash,
+                               seller_key_wrap, payment_prefix, payment_suffix)
       VALUES (${sellerId}, ${listing.kind}, ${listing.category}, ${listing.region}, ${listing.name},
               ${listing.description}, ${body.price}, ${listing.deadline}, ${dataHash},
-              ${listing.kind === "data" ? keyWrap : null})
+              ${listing.kind === "data" ? keyWrap : null}, ${derivationNonce()}, ${derivationNonce()})
       RETURNING id`;
     // The requester becomes the first bidder on the answering offer.
     if (requestId) await tx`UPDATE buy_offers SET sell_offer_id = ${row.id} WHERE id = ${requestId}`;
@@ -210,7 +217,10 @@ export async function createOffer(sellerId: string, body: Record<string, unknown
   });
 }
 
-/** Places or updates the caller's maximum price on an open offer. */
+/**
+ * Places or updates the caller's maximum price on an open offer, and brings a withdrawn bid
+ * back. It only counts once pledged: see paymentRequest in delivery.ts.
+ */
 export async function placeBid(buyerId: string, offerId: string, maxPrice: unknown) {
   if (!isSats(maxPrice)) return { error: "maxPrice must be a positive integer (satoshis)" };
   const [row] = await sql`
@@ -218,23 +228,34 @@ export async function placeBid(buyerId: string, offerId: string, maxPrice: unkno
     SELECT ${buyerId}, s.id, ${maxPrice} FROM sell_offers s
     WHERE s.id = ${offerId} AND s.status = 'open' AND s.deadline > now() AND s.seller_id <> ${buyerId}
     ON CONFLICT (sell_offer_id, buyer_id) WHERE sell_offer_id IS NOT NULL
-      DO UPDATE SET max_price = EXCLUDED.max_price
+      DO UPDATE SET max_price = EXCLUDED.max_price, status = 'open'
     RETURNING id`;
   return row ? { id: row.id as string } : { error: "Offer is closed, unknown, or your own" };
 }
 
+/** A bid that pledged stays on record, as lost, so its pledges can be taken back. */
 export async function withdrawBid(buyerId: string, offerId: string) {
-  const rows = await sql`
-    DELETE FROM buy_offers b USING sell_offers s
-    WHERE b.sell_offer_id = s.id AND s.id = ${offerId} AND b.buyer_id = ${buyerId}
-      AND s.status = 'open' AND s.deadline > now()
-    RETURNING b.id`;
-  return rows.length > 0;
+  return sql.begin(async (tx) => {
+    const [offer] = await tx`
+      SELECT id FROM sell_offers WHERE id = ${offerId} AND status = 'open' AND deadline > now() FOR UPDATE`;
+    if (!offer) return false;
+    const [updated] = await tx`
+      UPDATE buy_offers b SET status = 'lost'
+      WHERE b.sell_offer_id = ${offerId} AND b.buyer_id = ${buyerId} AND b.status = 'open'
+        AND EXISTS (SELECT 1 FROM pledges p WHERE p.bid_id = b.id)
+      RETURNING b.id`;
+    if (updated) return true;
+    const deleted = await tx`
+      DELETE FROM buy_offers b WHERE b.sell_offer_id = ${offerId} AND b.buyer_id = ${buyerId} AND b.status = 'open'
+      RETURNING b.id`;
+    return deleted.length > 0;
+  });
 }
 
 /**
- * The seller takes back an offer before its deadline. Open offers hold no pledges yet, so the
- * bids on it are simply dropped; a request it answered is handed back to its buyer, open again.
+ * The seller takes back an offer before its deadline. Bids on it are dropped and a request it
+ * answered is handed back to its buyer, open again. With pledges on it the offer stays on
+ * record as unsold instead, so that their buyers can take them back.
  */
 export async function withdrawOffer(sellerId: string, offerId: string) {
   return sql.begin(async (tx) => {
@@ -243,8 +264,18 @@ export async function withdrawOffer(sellerId: string, offerId: string) {
       WHERE id = ${offerId} AND seller_id = ${sellerId} AND status = 'open' AND deadline > now()
       FOR UPDATE`;
     if (!offer) return false;
-    await tx`UPDATE buy_offers SET sell_offer_id = NULL WHERE sell_offer_id = ${offerId} AND name IS NOT NULL`;
-    await tx`DELETE FROM sell_offers WHERE id = ${offerId}`;
+    await tx`
+      UPDATE buy_offers b SET sell_offer_id = NULL
+      WHERE b.sell_offer_id = ${offerId} AND b.name IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM pledges p WHERE p.bid_id = b.id)`;
+    const [pledged] = await tx`
+      SELECT 1 FROM pledges p JOIN buy_offers b ON b.id = p.bid_id WHERE b.sell_offer_id = ${offerId} LIMIT 1`;
+    if (pledged) {
+      await tx`UPDATE buy_offers SET status = 'lost' WHERE sell_offer_id = ${offerId}`;
+      await tx`UPDATE sell_offers SET status = 'unsold', settled_at = now() WHERE id = ${offerId}`;
+    } else {
+      await tx`DELETE FROM sell_offers WHERE id = ${offerId}`;
+    }
     return true;
   });
 }
@@ -324,10 +355,11 @@ export async function listActivity() {
       FROM sell_offers s JOIN users u ON u.id = s.seller_id
       WHERE s.settled_at IS NOT NULL
       UNION ALL
-      SELECT 'pledge', p.created_at, s.id, s.name, u.identity_key, u.kind, p.satoshis, p.txid
+      SELECT 'pledge', min(p.created_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis)::bigint, p.txid
       FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
       JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE p.status <> 'spent'
+      GROUP BY p.txid, s.id, s.name, u.identity_key, u.kind
       UNION ALL
       SELECT 'payment', s.paid_at, s.id, s.name, u.identity_key, u.kind, s.price, s.payment_txid
       FROM sell_offers s JOIN users u ON u.id = s.seller_id
@@ -341,10 +373,11 @@ export async function listActivity() {
       FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE b.received_at IS NOT NULL
       UNION ALL
-      SELECT 'refund', p.refunded_at, s.id, s.name, u.identity_key, u.kind, p.satoshis, p.refund_txid
+      SELECT 'refund', max(p.refunded_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis)::bigint, p.refund_txid
       FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
       JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE p.refunded_at IS NOT NULL
+      GROUP BY p.refund_txid, s.id, s.name, u.identity_key, u.kind
     ) e
     ORDER BY at DESC
     LIMIT 50`;
@@ -363,7 +396,11 @@ export async function listActivity() {
 
 // ---------- Deadline settlement ----------
 
-/** Settles every open offer whose deadline has passed and expires unanswered requests. */
+/**
+ * Settles every open offer whose deadline has passed and expires unanswered requests. Only
+ * pledged money counts, so the group is already paid for: expireDue in delivery.ts builds
+ * its payment. Bids without enough pledged lose, and their pledges can be taken back.
+ */
 export async function settleDue() {
   const due = await sql`SELECT id FROM sell_offers WHERE status = 'open' AND deadline <= now()`;
   for (const { id } of due) {
@@ -372,20 +409,21 @@ export async function settleDue() {
         SELECT price FROM sell_offers WHERE id = ${id} AND status = 'open' FOR UPDATE SKIP LOCKED`;
       if (!offer) return;
       const bids = await tx`
-        SELECT id, max_price FROM buy_offers
-        WHERE sell_offer_id = ${id} AND status = 'open' ORDER BY created_at`;
+        SELECT b.id, LEAST(b.max_price, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
+                             WHERE p.bid_id = b.id AND p.status = 'active'), 0)) AS funded
+        FROM buy_offers b
+        WHERE b.sell_offer_id = ${id} AND b.status = 'open' ORDER BY b.created_at`;
       const group = findPaymentGroup(
         Number(offer.price),
-        bids.map((b: any) => ({ id: b.id, maxPrice: Number(b.max_price) })),
+        bids.map((b: any) => ({ id: b.id, maxPrice: Number(b.funded) })).filter((b: Bid) => b.maxPrice > 0),
       );
       for (const { id: bidId, amount } of group ?? []) {
-        await tx`UPDATE buy_offers SET status = 'won', amount = ${amount} WHERE id = ${bidId}`;
+        await tx`UPDATE buy_offers SET status = 'pledged', amount = ${amount} WHERE id = ${bidId}`;
       }
       await tx`UPDATE buy_offers SET status = 'lost' WHERE sell_offer_id = ${id} AND status = 'open'`;
       // The group pays the whole price in one transaction to one BRC-29 key of the seller.
       await tx`UPDATE sell_offers SET status = ${group ? "sold" : "unsold"}, settled_at = now(),
-                 payment_deadline = ${group ? paymentWindowEnd() : null},
-                 payment_prefix = ${group ? derivationNonce() : null}, payment_suffix = ${group ? derivationNonce() : null}
+                 payment_deadline = ${group ? paymentWindowEnd() : null}
                WHERE id = ${id}`;
     });
   }

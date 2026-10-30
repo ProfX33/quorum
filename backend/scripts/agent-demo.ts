@@ -135,12 +135,19 @@ async function buyerAgent(who: "alice" | "bob", agent: MarketAgent, joinAfterMs:
     say(who, `splitting with ${offer.bidCount} other(s) brings my share to ${Math.ceil(offer.price / (offer.bidCount + 1))} sats: bidding`);
   }
   await agent.bid(offer.id, BUDGET);
+  say(who, `pledged my budget of ${BUDGET} sats: only money already pledged counts, and it stays mine unless the group covers the price`);
 
   for (;;) {
     for (const e of await agent.work()) {
-      if (e.type === "pledged") say(who, `group formed, pledged my share of ${e.amount} sats (still mine until everyone has pledged)`);
+      if (e.type === "refunded") say(who, `took back the ${e.amount} sats my share did not need`);
       if (e.type === "error") say(who, `problem, will retry: ${e.error}`);
-      if (e.type === "data") return report(who, agent, offer.id, e, act);
+      if (e.type === "data") {
+        const result = await report(who, agent, offer.id, e, act);
+        for (const r of await agent.work()) {
+          if (r.type === "refunded") say(who, `took back the ${r.amount} sats my share did not need`);
+        }
+        return result;
+      }
     }
     await sleep(1000);
   }
@@ -178,7 +185,7 @@ const [seller, alice, bob] = await Promise.all(
 
 if (live) {
   await Promise.all([alice, bob].map((a) => a.wallet.sync()));
-  const poor = [alice, bob].filter((a) => a.wallet.balance < 600);
+  const poor = [alice, bob].filter((a) => a.wallet.balance < 1000);
   if (poor.length > 0) {
     console.error("Fund these addresses with at least 1,500 sats each, then run this again:");
     for (const a of poor) console.error(`  ${a.wallet.address} (has ${a.wallet.balance})`);

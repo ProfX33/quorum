@@ -13,18 +13,20 @@ import {
   spentBy,
   txUrl,
 } from "./payments.ts";
-import { findPaymentGroup } from "./settlement.ts";
+import { denominations, findPaymentGroup, pickDenominations } from "./settlement.ts";
 
-// After settlement the payment group pays the seller in one transaction, so the seller is
-// paid the full price or nothing, and no buyer gets the data unless the seller is paid.
-// Each winner pledges their share: an output locked to their own wallet key, signed with
-// ALL|ANYONECANPAY for the group outputs (see payments.ts). Once every member has pledged,
-// the server combines the pledges into the group payment and broadcasts it through Arcade.
-// When the network has seen it, the seller's wallet (browser or agent) claims the payment
-// and wraps the data key for each buyer.
-// A member who does not pledge in time is dropped, and the others are regrouped with
-// larger shares (they top up), or the offer fails. Pledges that end up unused stay the
-// buyer's: they take them back with a refund their own wallet signs.
+// The payment group pays the seller in one transaction, so the seller is paid the full price
+// or nothing, and no buyer gets the data unless the seller is paid.
+// A bid is paid for up front: the buyer pledges their maximum, in outputs locked to their
+// own wallet key and signed with ALL|ANYONECANPAY for the group outputs (see payments.ts).
+// At the deadline the group is formed from pledged money only, so no member has anything
+// left to do: the server combines their pledges into the group payment and broadcasts it
+// through Arcade. When the network has seen it, the seller's wallet (browser or agent)
+// claims the payment and wraps the data key for each buyer.
+// A pledge stays in the buyer's control, so a member can still spend it elsewhere. The network
+// then rejects the payment, and that member is dropped and the others are regrouped at once
+// from what they have already pledged, or the offer fails. Pledges that end up unused stay
+// the buyer's: they take them back with a refund their own wallet signs.
 
 export const MAX_DATA_BYTES = Number(process.env.MAX_DATA_MB ?? 20) * 1024 * 1024;
 const MAX_BEEF_BYTES = 1024 * 1024;
@@ -81,6 +83,7 @@ export async function offerData(offerId: string) {
 async function loadBid(bidId: string) {
   const [bid] = await sql`
     SELECT b.*, s.kind, s.price, s.data_hash, s.seller_key_wrap, s.payment_deadline, s.seller_id,
+      s.status AS offer_status, s.deadline AS offer_deadline,
       s.payment_prefix AS group_prefix, s.payment_suffix AS group_suffix, s.payment_seen_at AS group_seen_at,
       u.identity_key AS seller_key, bu.identity_key AS buyer_key,
       EXISTS (SELECT 1 FROM data_files f WHERE f.hash = s.data_hash) AS has_data,
@@ -99,29 +102,31 @@ const outputsOf = (bid: any) =>
   groupOutputs(bid.seller_key, bid.group_prefix, bid.group_suffix, bid.sell_offer_id, Number(bid.price));
 
 /**
- * What the buyer's wallet needs to pledge for a won bid: the pledge amount (their open
- * share plus the fee contribution), the key to lock it to, and the group outputs to sign.
+ * What the buyer's wallet needs to fund an open bid: the outputs to create (the unpledged
+ * rest of their maximum in denominations, each with its fee contribution), the key to lock
+ * them to, and the group outputs to sign. Raising a maximum pledges the difference.
  */
 export async function paymentRequest(buyerId: string, bidId: string) {
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (bid.status !== "won") {
-    return fail(409, bid.status === "pledged" ? "Your share is pledged already" : "There is nothing to pledge for this bid");
+  if (bid.status !== "open" || bid.offer_status !== "open" || new Date(bid.offer_deadline) <= new Date()) {
+    return fail(409, "Bidding has closed, there is nothing to pledge for this bid");
   }
-  if (new Date(bid.payment_deadline) <= new Date()) return fail(409, "The payment window has closed");
   if (bid.kind === "data" && (!bid.has_data || !bid.seller_key_wrap)) {
     return fail(409, "The seller never uploaded the data, so this offer cannot be paid");
   }
-  const amount = Number(bid.amount);
+  const amount = Number(bid.max_price);
   const pledged = Number(bid.credited);
-  const due = Math.max(amount - pledged, 1);
+  const due = amount - pledged;
+  if (due <= 0) return fail(409, "Your bid is fully pledged already");
   return {
     amount,
     pledged,
     due,
-    satoshis: due + PLEDGE_FEE,
+    fee: PLEDGE_FEE,
+    outputs: denominations(due).map((v) => v + PLEDGE_FEE),
     keyID: `${bid.id} ${bid.pledge_count}`,
-    deadline: new Date(bid.payment_deadline).toISOString(),
+    deadline: new Date(bid.offer_deadline).toISOString(),
     description: "Data market pledge",
     // The buyer's wallet re-derives the seller output from these before signing.
     offerId: bid.sell_offer_id as string,
@@ -134,24 +139,26 @@ export async function paymentRequest(buyerId: string, bidId: string) {
 }
 
 /**
- * Accepts a pledge: { beef (AtomicBEEF hex of the pledge transaction), vout, unlockingScript,
- * keyID }. It is verified, broadcast and recorded. A pledge arriving after the buyer was
- * dropped is recorded too, so it can be refunded. Idempotent per pledge output.
+ * Accepts a pledge: { beef (AtomicBEEF hex of the pledge transaction), pledges (the
+ * { vout, unlockingScript } of each output), keyID }. It is verified, broadcast and recorded.
+ * A pledge arriving after bidding closed is recorded too, so it can be refunded. Idempotent.
  */
 export async function submitPledge(buyerId: string, bidId: string, body: Record<string, unknown>) {
-  const { beef, vout, unlockingScript, keyID } = body;
+  const { beef, pledges, keyID } = body;
   if (!isHex(beef, MAX_BEEF_BYTES)) return fail(400, "beef must be the hex AtomicBEEF of the pledge transaction");
-  if (!isHex(unlockingScript, 1024)) return fail(400, "unlockingScript must be hex");
+  if (!Array.isArray(pledges) || !pledges.every((p) => isHex(p?.unlockingScript, 1024))) {
+    return fail(400, "pledges must list { vout, unlockingScript } with the script in hex");
+  }
   if (typeof keyID !== "string" || !keyID || keyID.length > 200) return fail(400, "keyID of the pledge key is required");
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
   if (!bid.group_prefix) return fail(409, "This bid has no group payment");
 
   const bytes = Utils.toArray(beef, "hex");
-  const pledge = await parsePledge(bytes, vout, unlockingScript, await outputsOf(bid));
+  const pledge = await parsePledge(bytes, pledges, await outputsOf(bid));
   if ("error" in pledge) return fail(400, pledge.error!);
 
-  const [known] = await sql`SELECT bid_id FROM pledges WHERE txid = ${pledge.txid} AND vout = ${pledge.vout}`;
+  const [known] = await sql`SELECT bid_id FROM pledges WHERE txid = ${pledge.txid} LIMIT 1`;
   if (known && known.bid_id !== bidId) return fail(409, "This pledge belongs to another bid");
   if (!known) {
     let network;
@@ -162,33 +169,32 @@ export async function submitPledge(buyerId: string, bidId: string, body: Record<
       return fail(502, "Could not reach the network, please retry (your pledge is safe to resubmit)");
     }
     if (network.state === "rejected") return fail(400, `The network rejected the pledge: ${network.reason}`);
-    await sql`
-      INSERT INTO pledges (bid_id, txid, vout, satoshis, key_id, beef, unlocking_script)
-      VALUES (${bidId}, ${pledge.txid}, ${pledge.vout}, ${pledge.satoshis}, ${keyID},
-              ${Buffer.from(bytes)}, ${pledge.unlockingScript})
-      ON CONFLICT (txid, vout) DO NOTHING`;
-    await sql`
-      UPDATE buy_offers b SET status = 'pledged'
-      WHERE b.id = ${bidId} AND b.status = 'won'
-        AND b.amount <= (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
-                         WHERE p.bid_id = b.id AND p.status IN ('active', 'used'))`;
-    await assembleGroupPayment(bid.sell_offer_id);
+    await sql.begin(async (tx) => {
+      for (const o of pledge.outputs) {
+        await tx`
+          INSERT INTO pledges (bid_id, txid, vout, satoshis, key_id, beef, unlocking_script)
+          VALUES (${bidId}, ${pledge.txid}, ${o.vout}, ${o.satoshis}, ${keyID}, ${Buffer.from(bytes)}, ${o.unlockingScript})
+          ON CONFLICT (txid, vout) DO NOTHING`;
+      }
+    });
   }
 
   const now = await loadBid(bidId);
-  if (!["won", "pledged", "paid"].includes(now.status)) {
-    return fail(409, "You are no longer in the payment group. Your pledge is recorded and you can take it back.");
+  if (!["open", "pledged", "paid"].includes(now.status)) {
+    return fail(409, "This bid is out of the running. Your pledge is recorded and you can take it back.");
   }
-  return { status: now.status as string, pledged: Number(now.credited), amount: Number(now.amount) };
+  return { status: now.status as string, pledged: Number(now.credited), amount: Number(now.amount ?? now.max_price) };
 }
 
 // ---------- The group payment ----------
 
 /**
- * Builds the group payment once every member has pledged their share, and broadcasts it.
- * Per member, pledges are used in order until the share is covered; extra ones stay refundable.
+ * Builds the group payment and broadcasts it. Per member, exactly the pledge outputs that add
+ * up to the share are used; the others stay refundable. A member whose outputs cannot make
+ * up the share is dropped and the group formed again.
  */
-async function assembleGroupPayment(offerId: string) {
+async function assembleGroupPayment(offerId: string): Promise<void> {
+  let regrouped = false;
   const payment = await sql.begin(async (tx) => {
     const [offer] = await tx`
       SELECT s.price, s.payment_prefix, s.payment_suffix, u.identity_key AS seller_key
@@ -197,22 +203,28 @@ async function assembleGroupPayment(offerId: string) {
       FOR UPDATE OF s`;
     if (!offer) return null;
     const members = await tx`
-      SELECT id, status, amount FROM buy_offers WHERE sell_offer_id = ${offerId} AND status IN ('won', 'pledged')`;
-    if (members.length === 0 || members.some((m: any) => m.status !== "pledged")) return null;
+      SELECT id, amount FROM buy_offers WHERE sell_offer_id = ${offerId} AND status = 'pledged'`;
+    if (members.length === 0) return null;
 
     const pledges = await tx`
       SELECT p.id, p.bid_id, p.vout, p.satoshis, p.beef, p.unlocking_script FROM pledges p
       JOIN buy_offers b ON b.id = p.bid_id
       WHERE b.sell_offer_id = ${offerId} AND b.status = 'pledged' AND p.status = 'active'
-      ORDER BY p.created_at`;
-    const open = new Map<string, number>(members.map((m: any) => [m.id, Number(m.amount)]));
-    const use = pledges.filter((p: any) => {
-      const left = open.get(p.bid_id)!;
-      if (left <= 0) return false;
-      open.set(p.bid_id, left - (Number(p.satoshis) - PLEDGE_FEE));
-      return true;
-    });
-    if ([...open.values()].some((left) => left > 0)) return null;
+      ORDER BY p.created_at, p.vout`;
+    const use: any[] = [];
+    const short: string[] = [];
+    for (const m of members) {
+      const mine = pledges.filter((p: any) => p.bid_id === m.id);
+      const picked = pickDenominations(mine.map((p: any) => Number(p.satoshis) - PLEDGE_FEE), Number(m.amount));
+      if (picked) use.push(...picked.map((i) => mine[i]));
+      else short.push(m.id);
+    }
+    if (short.length > 0) {
+      await tx`UPDATE buy_offers SET status = 'defaulted' WHERE id::text = ANY(${short})`;
+      await regroup(tx, offerId);
+      regrouped = true;
+      return null;
+    }
 
     const outputs = await groupOutputs(offer.seller_key, offer.payment_prefix, offer.payment_suffix, offerId, Number(offer.price));
     let payment: Transaction, beef: number[];
@@ -235,6 +247,7 @@ async function assembleGroupPayment(offerId: string) {
       WHERE id = ${offerId}`;
     return payment;
   });
+  if (regrouped) return assembleGroupPayment(offerId);
   if (!payment) return;
   // Recorded first, so nothing is lost if this fails; checkPayments follows it from here.
   try {
@@ -252,9 +265,32 @@ async function failOffer(tx: typeof sql, offerId: string) {
 }
 
 /**
+ * Forms the group again from the members left, on what they have pledged and not spent:
+ * the price is split over those who can cover the larger share. No one has to act. When
+ * nobody can, the offer fails.
+ */
+async function regroup(tx: typeof sql, offerId: string) {
+  const [offer] = await tx`SELECT price FROM sell_offers WHERE id = ${offerId}`;
+  const rest = await tx`
+    SELECT b.id, LEAST(b.max_price, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
+                         WHERE p.bid_id = b.id AND p.status = 'active'), 0)) AS funded
+    FROM buy_offers b WHERE b.sell_offer_id = ${offerId} AND b.status = 'pledged' ORDER BY b.created_at`;
+  const group = findPaymentGroup(Number(offer.price), rest.map((b: any) => ({ id: b.id, maxPrice: Number(b.funded) })));
+  if (!group) return failOffer(tx, offerId);
+  const shares = new Map(group.map((p) => [p.id, p.amount]));
+  for (const b of rest) {
+    const amount = shares.get(b.id);
+    await tx`
+      UPDATE buy_offers SET amount = COALESCE(${amount ?? null}, amount), status = ${amount === undefined ? "lost" : "pledged"}
+      WHERE id = ${b.id}`;
+  }
+  await tx`UPDATE sell_offers SET payment_deadline = ${paymentWindowEnd()} WHERE id = ${offerId}`;
+}
+
+/**
  * The network rejected the group payment, usually because a buyer spent their pledge
- * elsewhere. Such pledges stop counting, so that buyer has to pledge again (or is dropped
- * when the window closes); everybody else's pledges stay in place.
+ * elsewhere. That buyer is dropped and the group is formed again from everybody else's
+ * pledges, which stay in place.
  */
 async function undoGroupPayment(offerId: string, txid: string, reason: string) {
   const used = await sql`
@@ -285,10 +321,10 @@ async function undoGroupPayment(offerId: string, txid: string, reason: string) {
       return true;
     }
     await tx`
-      UPDATE buy_offers b SET status = CASE WHEN b.amount <= COALESCE((
-          SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = b.id AND p.status = 'active'), 0)
-        THEN 'pledged' ELSE 'won' END
+      UPDATE buy_offers b SET status = CASE WHEN EXISTS (
+          SELECT 1 FROM pledges p WHERE p.bid_id = b.id AND p.status = 'spent') THEN 'defaulted' ELSE 'pledged' END
       WHERE b.sell_offer_id = ${offerId} AND b.status = 'paid'`;
+    await regroup(tx, offerId);
     return false;
   });
   if (!collapsed) await assembleGroupPayment(offerId);
@@ -332,45 +368,24 @@ export async function checkPayments() {
 }
 
 /**
- * Drops members who did not pledge in time and regroups the rest: the price is split
- * again over those whose maximum still covers the larger share, who then top up their
- * pledges in a new window. When nobody is left, the offer fails.
+ * Builds the group payment of settled offers. One that cannot be built before its window
+ * closes fails, so that a stuck offer never keeps its buyers from their pledges. Also
+ * removes uploads never listed within a day.
  */
-async function regroup(offerId: string) {
-  await sql.begin(async (tx) => {
-    const [offer] = await tx`
-      SELECT price FROM sell_offers
-      WHERE id = ${offerId} AND status = 'sold' AND payment_txid IS NULL AND payment_deadline <= now()
-      FOR UPDATE SKIP LOCKED`;
-    if (!offer) return;
-    await tx`UPDATE buy_offers SET status = 'defaulted' WHERE sell_offer_id = ${offerId} AND status = 'won'`;
-    const rest = await tx`
-      SELECT b.id, b.max_price, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
-                                          WHERE p.bid_id = b.id AND p.status = 'active'), 0) AS credited
-      FROM buy_offers b WHERE b.sell_offer_id = ${offerId} AND b.status = 'pledged' ORDER BY b.created_at`;
-    const group = findPaymentGroup(Number(offer.price), rest.map((b: any) => ({ id: b.id, maxPrice: Number(b.max_price) })));
-    if (!group) return failOffer(tx, offerId);
-    const shares = new Map(group.map((p) => [p.id, p.amount]));
-    for (const b of rest) {
-      const amount = shares.get(b.id);
-      await tx`
-        UPDATE buy_offers SET amount = COALESCE(${amount ?? null}, amount),
-          status = ${amount === undefined ? "lost" : Number(b.credited) >= amount ? "pledged" : "won"}
-        WHERE id = ${b.id}`;
-    }
-    await tx`UPDATE sell_offers SET payment_deadline = ${paymentWindowEnd()} WHERE id = ${offerId}`;
-  });
-}
-
-/** Payment windows that closed with members missing; uploads never listed within a day. */
 export async function expireDue() {
   const due = await sql`
-    SELECT s.id FROM sell_offers s
-    WHERE s.status = 'sold' AND s.payment_txid IS NULL AND s.payment_deadline <= now()
-      AND EXISTS (SELECT 1 FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'won')`;
-  for (const { id } of due) {
-    await regroup(id);
+    SELECT s.id, s.payment_deadline <= now() AS closed FROM sell_offers s
+    WHERE s.status = 'sold' AND s.payment_txid IS NULL
+      AND EXISTS (SELECT 1 FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'pledged')`;
+  for (const { id, closed } of due) {
     await assembleGroupPayment(id);
+    if (closed) {
+      await sql.begin(async (tx) => {
+        const [offer] = await tx`
+          SELECT id FROM sell_offers WHERE id = ${id} AND status = 'sold' AND payment_txid IS NULL FOR UPDATE`;
+        if (offer) await failOffer(tx, id);
+      });
+    }
   }
   await sql`
     DELETE FROM data_files f
@@ -380,13 +395,13 @@ export async function expireDue() {
 
 // ---------- Refunds ----------
 
-const inGroup = (status: string) => ["won", "pledged"].includes(status);
+const inGroup = (status: string) => ["open", "won", "pledged"].includes(status);
 
 /** The buyer's unused pledges, for their wallet to sign a refund (only once out of the group). */
 export async function refundRequest(buyerId: string, bidId: string) {
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (inGroup(bid.status)) return fail(409, "Your pledge is still part of the group payment");
+  if (inGroup(bid.status)) return fail(409, "Your pledge still backs your bid; withdraw the bid to take it back");
   const pledges = await sql`
     SELECT txid, vout, satoshis, key_id, beef FROM pledges WHERE bid_id = ${bidId} AND status = 'active'
     ORDER BY created_at`;
@@ -405,7 +420,7 @@ export async function submitRefund(buyerId: string, bidId: string, beefHex: unkn
   if (!isHex(beefHex, MAX_BEEF_BYTES)) return fail(400, "beef must be the hex AtomicBEEF of the refund");
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (inGroup(bid.status)) return fail(409, "Your pledge is still part of the group payment");
+  if (inGroup(bid.status)) return fail(409, "Your pledge still backs your bid; withdraw the bid to take it back");
   const pledges = await sql`SELECT txid, vout, status, refund_txid FROM pledges WHERE bid_id = ${bidId}`;
   const refund = await parseRefund(
     Utils.toArray(beefHex, "hex"),
@@ -417,6 +432,10 @@ export async function submitRefund(buyerId: string, bidId: string, beefHex: unkn
     return { txid: refund.txid, txUrl: txUrl(refund.txid) };
   }
   if (spent.some((p: any) => p.status !== "active")) return fail(409, "Some of these pledges were refunded already");
+  // All at once: what is left of a pledge might not make up a share exactly any more.
+  if (spent.length !== pledges.filter((p: any) => p.status === "active").length) {
+    return fail(400, "A refund must take back all your unused pledges");
+  }
 
   let network;
   try {

@@ -15,9 +15,9 @@ import { getWallet, request } from './api';
 
 // Data is encrypted in the browser with a random AES-256-GCM key; the server only stores
 // the ciphertext (iv || ciphertext+tag) and the key wrapped by the seller's wallet to itself.
-// The payment group pays the seller in one transaction: each buyer pledges their share and
-// signs it for that transaction only (see backend/src/payments.ts). Once the network has
-// seen it, the seller's wallet unwraps the key and wraps it again for each buyer (BRC-2,
+// The payment group pays the seller in one transaction: each buyer pledges their maximum
+// when bidding and signs it for that transaction only (see backend/src/payments.ts), so
+// nobody has to act after the deadline. Once the network has seen it, the seller's wallet unwraps the key and wraps it again for each buyer (BRC-2,
 // counterparty = buyer). See backend/src/delivery.ts.
 
 // Must match backend/scripts/delivery-e2e.ts (agents use the same protocol)
@@ -28,6 +28,7 @@ const BRC29_PROTOCOL = [2, '3241645161d8'];
 const ANYONE_KEY = new PrivateKey(1).toPublicKey().toString();
 const GROUP_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
 const REFUND_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID;
+const PLEDGE_FEE = 30;
 
 const subtle = () => {
   if (!globalThis.crypto?.subtle) throw new Error('Encryption needs a secure page (https or localhost)');
@@ -176,12 +177,17 @@ export async function resumePayment(bidId) {
 }
 
 /**
- * Pledges the buyer's open share: the wallet moves it to a key of its own, then signs it
- * for the group payment only. Nothing reaches the seller until the whole group has pledged.
+ * Pledges the unpledged rest of the buyer's maximum: the wallet moves it to a key of its own,
+ * in one output per denomination, then signs each for the group payment only. Nothing
+ * reaches the seller unless the group covers the price, and what the share does not need
+ * stays the buyer's.
  */
-export async function payForBid(bidId) {
+export async function payForBid(bidId, maxPrice) {
   if (hasPendingPayment(bidId)) return resumePayment(bidId);
   const req = await request(`/api/bids/${bidId}/payment`);
+  // Never lock more than the buyer agreed to bid.
+  const credit = req.outputs.reduce((sum, satoshis) => sum + satoshis - PLEDGE_FEE, 0);
+  if (credit + req.pledged > maxPrice) throw new Error('The server asked for more than your maximum. Not signing it.');
   // Never sign for a payment that does not give the seller the full price.
   const [toSeller] = req.groupOutputs;
   if (toSeller.satoshis !== req.price
@@ -193,16 +199,21 @@ export async function payForBid(bidId) {
   const lockingScript = await pledgeLockingScript(wallet, req.keyID);
   const { tx } = await wallet.createAction({
     description: req.description,
-    outputs: [{ lockingScript, satoshis: req.satoshis, outputDescription: 'Pledge for a group purchase' }],
+    outputs: req.outputs.map((satoshis) => ({ lockingScript, satoshis, outputDescription: 'Pledge for a group purchase' })),
     labels: ['datamarket'],
   });
   if (!tx) throw new Error('The wallet did not return the signed transaction');
   const pledgeTx = Transaction.fromAtomicBEEF(tx);
-  const vout = pledgeTx.outputs.findIndex((o) => o.lockingScript.toHex() === lockingScript);
+  // The wallet may reorder the outputs.
+  const vouts = pledgeTx.outputs.flatMap((o, i) => (o.lockingScript.toHex() === lockingScript ? [i] : []));
+  if (vouts.length !== req.outputs.length) throw new Error('The wallet did not create the pledge outputs');
 
-  const group = buildTransaction(req.groupOutputs, [{ tx: pledgeTx, vout }]);
-  const unlockingScript = (await signWithPledgeKey(wallet, req.keyID, group, 0, GROUP_SCOPE)).toHex();
-  const pledge = { beef: hex(tx), vout, unlockingScript, keyID: req.keyID };
+  const pledges = [];
+  for (const vout of vouts) {
+    const group = buildTransaction(req.groupOutputs, [{ tx: pledgeTx, vout }]);
+    pledges.push({ vout, unlockingScript: (await signWithPledgeKey(wallet, req.keyID, group, 0, GROUP_SCOPE)).toHex() });
+  }
+  const pledge = { beef: hex(tx), pledges, keyID: req.keyID };
   store.set(pendingPayment(bidId), JSON.stringify(pledge));
   return submitPledge(bidId, pledge);
 }

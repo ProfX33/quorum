@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid, withdrawOffer } from '../api';
-import { canRefund } from '../delivery';
+import { canRefund, payForBid } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
 import { UserLink, profileHref, shortKey } from './UserLink';
 
@@ -51,14 +51,14 @@ export const STATUS_LABEL = {
   sold: 'Sold',
   unsold: 'Not sold',
   won: 'You won',
-  pledged: 'Pledged',
+  pledged: 'In payment group',
   lost: 'Not in payment group',
   expired: 'Expired',
   paid: 'Paid',
   delivered: 'Delivered',
   received: 'Received',
   disputed: 'Disputed',
-  defaulted: 'Payment missed',
+  defaulted: 'Pledge spent',
 };
 
 // How far each bidder got, as shown next to them on an offer.
@@ -70,7 +70,7 @@ const BIDDER_LABEL = {
   delivered: 'paid',
   received: 'paid',
   disputed: 'disputed',
-  defaulted: 'did not pay',
+  defaulted: 'spent pledge',
   lost: 'out',
 };
 const BIDDERS_ON_CARD = 6;
@@ -149,7 +149,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
           {offer.bidCount}
           {offer.status === 'open' &&
             (offer.share
-              ? ` — would sell now: ${offer.payers} payer${offer.payers > 1 ? 's' : ''} at ~${sats(offer.share)}`
+              ? ` pledged — would sell now: ${offer.payers} payer${offer.payers > 1 ? 's' : ''} at ~${sats(offer.share)}`
               : ' — not funded yet')}
           {offer.status === 'sold' && ` — paid by ${offer.payers}`}
         </dd>
@@ -197,7 +197,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
         </div>
       )}
       {/* A lost bid can still hold pledges from before the group failed. */}
-      {offer.myBid && (!['open', 'lost'].includes(offer.myBid.status) || (offer.myBid.status === 'lost' && canRefund(offer.myBid))) && (
+      {offer.myBid && ((offer.myBid.status === 'open' && open) || !['open', 'lost'].includes(offer.myBid.status) || (offer.myBid.status === 'lost' && canRefund(offer.myBid))) && (
         <BuyerDeal offer={offer} now={now} onChange={onChange} />
       )}
       {offer.mine && offer.sales && <SellerDeal offer={offer} />}
@@ -237,7 +237,12 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
           className="join flex-wrap"
           onSubmit={(e) => {
             e.preventDefault();
-            run(() => placeBid(offer.id, Number(maxPrice))).then((ok) => ok && setComposing(false));
+            // Only pledged money counts, so the wallet is asked right away; a refused prompt leaves the bid to fund later.
+            run(async () => {
+              const { id } = await placeBid(offer.id, Number(maxPrice));
+              const pledged = offer.myBid?.pledged ?? 0;
+              if (Number(maxPrice) > pledged) await payForBid(id, Number(maxPrice));
+            }).then((ok) => ok && setComposing(false));
           }}
         >
           <input
@@ -251,14 +256,14 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
             className="input input-bordered input-sm join-item w-44"
           />
           <button className="btn btn-primary btn-sm join-item">
-            {offer.myBid ? 'Update buying offer' : 'Place buying offer'}
+            {offer.myBid ? 'Update and pledge' : 'Bid and pledge'}
           </button>
           {!offer.myBid && (
             <button type="button" onClick={() => setComposing(false)} className="btn btn-ghost btn-sm join-item">
               Cancel
             </button>
           )}
-          {offer.myBid && (
+          {offer.myBid?.status === 'open' && (
             <button
               type="button"
               onClick={() => run(() => withdrawBid(offer.id))}

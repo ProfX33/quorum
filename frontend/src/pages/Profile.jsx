@@ -18,7 +18,7 @@ const BID_LABEL = {
   delivered: 'Delivered',
   received: 'Received',
   disputed: 'Disputed',
-  defaulted: 'Payment missed',
+  defaulted: 'Pledge spent',
 };
 
 const date = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—');

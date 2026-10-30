@@ -1,6 +1,6 @@
 import { Transaction, Utils } from "@bsv/sdk";
 import { AUTH_KEY_ID, AUTH_PROTOCOL } from "../src/auth.ts";
-import { groupOutputs, paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
+import { PLEDGE_FEE, groupOutputs, paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
 import { AgentWallet } from "./wallet.ts";
 
 // Everything the web app does for a signed-in user, for an agent without a browser: login,
@@ -87,9 +87,14 @@ export class MarketAgent {
     return this.call("/api/bids").then((d) => d.offers);
   }
 
-  /** Places or updates the agent's maximum. It pays at most this, or nothing. */
-  bid(offerId: string, maxPrice: number) {
-    return this.call(`/api/offers/${offerId}/bid`, { body: { maxPrice } });
+  /**
+   * Places or updates the agent's maximum and pledges it right away, because only pledged
+   * money counts at the deadline. The agent pays at most this, or nothing.
+   */
+  async bid(offerId: string, maxPrice: number) {
+    const placed = await this.call(`/api/offers/${offerId}/bid`, { body: { maxPrice } });
+    const { myBid } = await this.offer(offerId);
+    return myBid.pledged < myBid.maxPrice ? { ...placed, ...(await this.pay(placed.id)) } : placed;
   }
 
   withdrawBid(offerId: string) {
@@ -153,9 +158,9 @@ export class MarketAgent {
   // ---------- Buyer ----------
 
   /**
-   * Pledges the open share of a won bid. Nothing reaches the seller until the whole group has
-   * pledged, and the server's request is checked first: the agent only signs for outputs that
-   * pay the seller the price, and never for more than its own maximum.
+   * Pledges the unpledged rest of an open bid's maximum. Nothing reaches the seller unless the
+   * group covers the price, and the server's request is checked first: the agent only signs
+   * for outputs that pay the seller the price, and never locks more than its own maximum.
    */
   async pay(bidId: string) {
     const pendingId = `pledge:${bidId}`;
@@ -168,14 +173,18 @@ export class MarketAgent {
       throw new Error("The group payment the server asked for does not pay the seller the price. Not signing it.");
     }
     const { myBid } = await this.offer(req.offerId);
-    if (myBid?.id !== bidId || req.amount > myBid.maxPrice) {
-      throw new Error(`The share of ${req.amount} sats is above this agent's maximum. Not signing it.`);
+    const credit = req.outputs.reduce((sum: number, satoshis: number) => sum + satoshis - PLEDGE_FEE, 0);
+    if (myBid?.id !== bidId || credit + myBid.pledged > myBid.maxPrice) {
+      throw new Error(`The pledge of ${credit} sats is above this agent's maximum. Not signing it.`);
     }
 
     const before = this.wallet.snapshot();
-    const tx = await this.wallet.createAction(await pledgeLockingScript(this.wallet.proto, req.keyID), req.satoshis);
-    const unlockingScript = await signPledge(this.wallet.proto, req.keyID, req.groupOutputs, tx, 0);
-    const pledge = { beef: Utils.toHex(tx.toAtomicBEEF()), vout: 0, unlockingScript, keyID: req.keyID };
+    const lockingScript = await pledgeLockingScript(this.wallet.proto, req.keyID);
+    const tx = await this.wallet.createAction(req.outputs.map((satoshis: number) => ({ lockingScript, satoshis })));
+    const pledges = await Promise.all(req.outputs.map(async (_: number, vout: number) => ({
+      vout, unlockingScript: await signPledge(this.wallet.proto, req.keyID, req.groupOutputs, tx, vout),
+    })));
+    const pledge = { beef: Utils.toHex(tx.toAtomicBEEF()), pledges, keyID: req.keyID };
     this.wallet.setPending(pendingId, { pledge, before });
     return this.submitPledge(bidId, pledge, before);
   }
@@ -240,7 +249,7 @@ export class MarketAgent {
   // ---------- Everything that is due ----------
 
   /**
-   * One round of the agent's obligations: pledges won bids, collects delivered data, takes
+   * One round of the agent's obligations: pledges open bids, collects delivered data, takes
    * back unused pledges, claims payments and delivers keys. Call it in a loop. A step that
    * fails is reported as an `error` event and comes up again in the next round.
    */
@@ -256,8 +265,10 @@ export class MarketAgent {
     for (const offer of await this.bids()) {
       const bid = offer.myBid;
       const ids = { offerId: offer.id as string, bidId: bid.id as string };
-      if (bid.status === "won") {
-        await step(ids, async () => ({ type: "pledged", amount: bid.amount, ...(await this.pay(bid.id)) }));
+      if (bid.status === "open") {
+        if (offer.status === "open" && bid.pledged < bid.maxPrice && new Date(offer.deadline) > new Date()) {
+          await step(ids, async () => ({ type: "pledged", ...(await this.pay(bid.id)) }));
+        }
       } else if (bid.status === "delivered") {
         await step(ids, async () => ({ type: "data", data: await this.download(bid.id) }));
       } else if (bid.refundable > 0) {

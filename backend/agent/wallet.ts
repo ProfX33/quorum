@@ -133,13 +133,13 @@ export class AgentWallet {
   }
 
   /**
-   * Builds and signs a transaction paying `satoshis` to `lockingScript` as output 0, with the
-   * change back to the wallet. The inputs count as spent from here on; restore a snapshot if
+   * Builds and signs a transaction with `outputs` first, and the change back to the wallet
+   * after them. The inputs count as spent from here on; restore a snapshot if
    * the transaction turns out never to reach the network.
    */
-  async createAction(lockingScript: string, satoshis: number) {
+  async createAction(outputs: { lockingScript: string; satoshis: number }[]) {
     await this.sync().catch((e) => console.error(`Could not check for new funds: ${e.message}`));
-    const need = satoshis + FEE_MARGIN;
+    const need = outputs.reduce((sum, o) => sum + o.satoshis, 0) + FEE_MARGIN;
     const picked: Utxo[] = [];
     for (const u of [...this.state.utxos].sort((a, b) => b.satoshis - a.satoshis)) {
       if (picked.reduce((sum, p) => sum + p.satoshis, 0) >= need) break;
@@ -157,7 +157,7 @@ export class AgentWallet {
         unlockingScriptTemplate: new P2PKH().unlock(u.keyID ? this.paymentKey(u.keyID) : this.key),
       });
     }
-    tx.addOutput({ lockingScript: LockingScript.fromHex(lockingScript), satoshis });
+    for (const o of outputs) tx.addOutput({ lockingScript: LockingScript.fromHex(o.lockingScript), satoshis: o.satoshis });
     tx.addOutput({ lockingScript: new P2PKH().lock(this.key.toPublicKey().toHash()), change: true });
     await tx.fee(new SatoshisPerKilobyte(FEE_RATE));
     await tx.sign();
@@ -165,7 +165,7 @@ export class AgentWallet {
     this.state.spent.push(...picked.map(outpoint));
     this.state.utxos = this.state.utxos.filter((u) => !picked.includes(u));
     this.save();
-    this.receive(tx, 1);
+    this.receive(tx, outputs.length);
     return tx;
   }
 }

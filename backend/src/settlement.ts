@@ -27,3 +27,42 @@ export function findPaymentGroup(price: number, bids: Bid[]): Payment[] | null {
   }
   return null;
 }
+
+/**
+ * Splits a bid's maximum into outputs that can pay any share up to it exactly: 1, 2, 4, ...
+ * and the rest. A pledge is signed once, before the share is known, and whatever its inputs
+ * carry beyond the group outputs goes to the miners, so the share has to be picked exactly.
+ */
+export function denominations(total: number): number[] {
+  const values: number[] = [];
+  let left = total;
+  for (let v = 1; v <= left; v *= 2) {
+    values.push(v);
+    left -= v;
+  }
+  if (left > 0) values.push(left);
+  return values;
+}
+
+/** Whether every amount up to the sum can be made from `values`, which denominations() gives. */
+export function isComplete(values: number[]) {
+  let reach = 0;
+  for (const v of [...values].sort((a, b) => a - b)) {
+    if (v < 1 || v > reach + 1) return false;
+    reach += v;
+  }
+  return true;
+}
+
+/** Indexes of `values` that add up to exactly `target`, or null. Exact on complete values. */
+export function pickDenominations(values: number[], target: number): number[] | null {
+  const order = values.map((v, i) => [v, i] as const).sort((a, b) => b[0] - a[0]);
+  const picked: number[] = [];
+  let left = target;
+  for (const [v, i] of order) {
+    if (v > left) continue;
+    picked.push(i);
+    left -= v;
+  }
+  return left === 0 ? picked : null;
+}

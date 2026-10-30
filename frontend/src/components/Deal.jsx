@@ -20,7 +20,7 @@ function TxLink({ bid }) {
   );
 }
 
-/** What the buyer does after settlement: pledge, wait for the group, download (or take the pledge back). */
+/** What the buyer does: pledge while bidding, wait for the group, download (or take the pledge back). */
 export function BuyerDeal({ offer, now, onChange }) {
   const bid = offer.myBid;
   const [busy, setBusy] = useState('');
@@ -43,7 +43,7 @@ export function BuyerDeal({ offer, now, onChange }) {
 
   // A pledge signed earlier whose submission did not get through is resubmitted, never pledged twice.
   useEffect(() => {
-    if (['won', 'defaulted', 'lost'].includes(bid.status) && hasPendingPayment(bid.id)) {
+    if (['open', 'defaulted', 'lost'].includes(bid.status) && hasPendingPayment(bid.id)) {
       run('Registering your pledge…', () => resumePayment(bid.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,42 +58,46 @@ export function BuyerDeal({ offer, now, onChange }) {
     </button>
   );
   let body;
-  if (bid.status === 'won') {
-    const due = bid.amount - bid.pledged;
-    body = (
-      <>
+  if (bid.status === 'open') {
+    const due = bid.maxPrice - bid.pledged;
+    if (due <= 0) {
+      body = (
         <span>
-          {bid.pledged > 0
-            ? <>The group got smaller, so your share is now <strong>{sats(bid.amount)}</strong>. You have pledged {sats(bid.pledged)}; pledge the remaining <strong>{sats(due)}</strong></>
-            : <>You are in the payment group. Pledge your share of <strong>{sats(bid.amount)}</strong></>}{' '}
-          before the window closes: {offer.paymentDeadline && <Countdown deadline={offer.paymentDeadline} now={now} />}.
-          The seller is paid in one transaction once everyone has pledged. Until then your pledge stays yours.
+          Your {sats(bid.pledged)} are pledged, so your bid counts. At the deadline the group pays by itself, you only pay your share
+          and take back the rest. The pledge stays yours until then: withdraw your bid to get it back.
         </span>
-        <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => payForBid(bid.id))} className="btn btn-primary btn-sm">
-          {spinner}
-          {busy || `Pledge ${sats(due)}`}
-        </button>
-      </>
-    );
+      );
+    } else {
+      body = (
+        <>
+          <span>
+            Only pledged money counts at the deadline. Pledge <strong>{sats(due)}</strong> to back your maximum
+            (plus a small fee per output). You pay your share at most, and the pledge stays yours unless the group covers the price.
+          </span>
+          <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => payForBid(bid.id, bid.maxPrice))} className="btn btn-primary btn-sm">
+            {spinner}
+            {busy || `Pledge ${sats(due)}`}
+          </button>
+        </>
+      );
+    }
   } else if (bid.status === 'pledged') {
     body = (
       <span>
-        Pledged. Waiting for the rest of the group: {group?.pledged ?? 0} of {group?.members ?? '?'} have pledged
-        {offer.paymentDeadline && <>, window closes <Countdown deadline={offer.paymentDeadline} now={now} /></>}.
-        If the group does not complete, you can take your pledge back.
+        You are in the payment group for <strong>{sats(bid.amount)}</strong>. The payment is being built from the group's pledges, nothing more is needed from you.
       </span>
     );
   } else if (bid.status === 'defaulted') {
     body = (
       <>
-        <span>The payment window closed before you pledged, so you are out of the group.</span>
+        <span>Your pledge was spent elsewhere, so you are out of the group. The others paid without you.</span>
         {refundButton}
       </>
     );
   } else if (bid.status === 'lost') {
     body = (
       <>
-        <span>The group could not pay the price, so nothing was paid. Your pledge is yours to take back.</span>
+        <span>You are not in the payment group, so nothing was paid. Your pledge is yours to take back.</span>
         {refundButton}
       </>
     );
@@ -152,13 +156,13 @@ export function BuyerDeal({ offer, now, onChange }) {
     return null;
   }
 
-  const tone = { won: 'alert-warning', defaulted: 'alert-error', disputed: 'alert-error', received: 'alert-success', delivered: 'alert-success' }[bid.status] ?? 'alert-info';
+  const tone = { open: 'alert-info', defaulted: 'alert-error', disputed: 'alert-error', received: 'alert-success', delivered: 'alert-success' }[bid.status] ?? 'alert-info';
   return (
     <div className="grid gap-2">
       <div role="alert" className={`alert alert-soft text-sm ${tone} flex flex-wrap`}>{body}</div>
-      {bid.paymentError && ['won', 'pledged'].includes(bid.status) && (
+      {bid.paymentError && bid.status === 'pledged' && (
         <div role="alert" className="alert alert-error alert-soft text-sm">
-          <span>{bid.paymentError}.{bid.status === 'won' ? ' Your pledge was spent elsewhere, please pledge again.' : ' Waiting for the members whose pledge was spent.'}</span>
+          <span>{bid.paymentError}. The group is paying again without the members whose pledge was spent.</span>
         </div>
       )}
       {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error}</span></div>}
@@ -167,12 +171,11 @@ export function BuyerDeal({ offer, now, onChange }) {
 }
 
 const SALE_STATES = [
-  ['won', 'awaiting pledge'],
   ['pledged', 'pledged'],
   ['paid', 'paid'],
   ['delivered', 'delivered'],
   ['received', 'received'],
-  ['defaulted', 'did not pay'],
+  ['defaulted', 'spent pledge'],
   ['disputed', 'disputed'],
 ];
 
@@ -187,7 +190,7 @@ export function SellerDeal({ offer }) {
         ))}
       </span>
       <span>
-        The group pays you the full {sats(offer.price)} in one transaction once every member has pledged, or nothing at all.
+        The group pays you the full {sats(offer.price)} in one transaction from what it has pledged, or nothing at all.
         {offer.kind === 'data' && ' While you are signed in here, the payment goes into your wallet and each buyer then gets the key automatically.'}
       </span>
     </div>

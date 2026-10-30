@@ -19,9 +19,12 @@ the requester becomes its first bidder. Others can join to share the price.
 
 Runs every few seconds for offers past their deadline:
 
-1. Split the price evenly over everybody who bid.
-2. Cut out every bidder whose maximum is below their share.
-3. Repeat with the rest until everyone left can pay (offer `sold`, they `won`) or nobody is left (`unsold`).
+Only pledged money counts: a bid is worth its maximum as far as its pledges cover it, and a
+bid with no pledge is ignored.
+
+1. Split the price evenly over every funded bid.
+2. Cut out every bidder whose funded maximum is below their share.
+3. Repeat with the rest until everyone left can pay (offer `sold`, they `pledged`) or nobody is left (`unsold`).
 
 Prices are integer satoshis; a rounding remainder goes to the highest bidders.
 
@@ -34,15 +37,19 @@ The server never holds funds or keys.
    which becomes the offer's `dataHash`. The key is encrypted by the seller's wallet to
    itself (BRC-2, protocol `datamarket data key`, keyID = `dataHash`) and stored as
    `sellerKeyWrap`, so the seller only needs their wallet to deliver later.
-2. **Settlement.** Every winner gets their own BRC-29 derivation (prefix/suffix) and the
-   group gets a payment window (`PAYMENT_WINDOW_MINUTES`, default 60).
-3. **Payment.** The winner's wallet pays its share straight to the seller (`createAction`
-   with the outputs from `GET /api/bids/:id/payment`, plus an OP_RETURN tag
-   `tum-datamarket <offerId> <bidId>`). The sender of the BRC-29 payment is the public
-   "anyone" key, so the server can derive the seller's payment script from the seller's
-   identity key and check the transaction. It verifies the signatures, broadcasts through
-   Arcade and follows the transaction until the network has seen it. A rejected payment
-   (e.g. double spend) is undone so the buyer can pay again.
+2. **Bidding is paying to commit.** While the offer is open, the buyer's wallet locks their
+   maximum to a key of their own (`GET`/`POST /api/bids/:id/payment`). It is split into
+   denominations (1, 2, 4, ... and the rest), each output carrying a 30 sat fee contribution,
+   and each is signed `ALL|ANYONECANPAY` for the group outputs: the full price to the seller
+   and an OP_RETURN tag. The seller's BRC-29 key is fixed at listing. Withdrawing before the
+   deadline makes the pledge refundable, and raising a maximum pledges the difference.
+3. **Payment.** At the deadline the group is formed from pledged money, and the server
+   combines exactly the outputs that add up to each share into one transaction and broadcasts
+   it through Arcade. Nobody signs anything after the deadline, so nobody can hold the group
+   up by not paying. If a member spends their pledge elsewhere, the network rejects the
+   payment; that member is `defaulted` and the group is re-formed at once from what the others
+   have pledged, with larger shares up to their maxima, or the offer fails. An offer whose
+   payment cannot be built within `PAYMENT_WINDOW_MINUTES` fails too.
 4. **Delivery.** Once the network has seen a payment, the seller's wallet claims it
    (`internalizeAction`, "wallet payment") and wraps the data key for that buyer
    (counterparty = buyer, keyID = offer id). In the web app this runs in the background
@@ -52,18 +59,26 @@ The server never holds funds or keys.
    (`ok: false`), which asks the seller to deliver again. After 3 failed deliveries the bid
    is `disputed`.
 
-Bid states after settlement: `won` → `paid` → `delivered` → `received`, or `defaulted`
-when the window passes without payment (a valid late payment is still accepted, since the
-money already reached the seller), or `disputed`.
+Bid states: `open` → `pledged` (in the group) → `paid` → `delivered` → `received`, or
+`disputed`; `lost` when withdrawn, unfunded, outside the group or the offer failed;
+`defaulted` when the pledge was spent elsewhere.
 
-Each buyer is served as soon as their own payment is through. So a group member who
-does not pay never blocks the others or needs a refund; the seller just receives less.
+Everything a buyer pledged and that no payment used stays theirs: they take it back with a
+refund their own wallet signs (`GET`/`POST /api/bids/:id/refund`), less the fee contributions.
 
 Known limits:
 - The seller (or their agent) has to come online to deliver. The key cannot be released
   without them, because the server cannot decrypt.
 - `dataHash` proves the buyer gets the data that was committed to, not that it is good.
 - A payment counts once it is seen on the network (0-conf).
+- A pledge is not locked: it sits on the buyer's own key, which is what keeps this
+  non-custodial, so it can be spent until the group payment is seen. That cannot block the
+  payment, but it can cost a retry per defector, make the others' shares larger, or fail the
+  offer if the rest cannot cover the price. A defector pays only their mining fees.
+- Every output costs its 30 sat fee contribution, spent or refunded, so a bid's overhead is
+  about 30 sats times log2 of its maximum, even if the offer fails.
+- Buyers' refunds need the pledge transactions, which the server hands out. If it is gone,
+  the funds are still on the buyer's key, but the wallet has to find them itself.
 
 `backend/scripts/delivery-e2e.ts` runs the whole flow with two agents against a mock Arcade.
 It also shows how an agent uses this API.
@@ -87,8 +102,10 @@ Agents do not have to call this directly: see [agents/README.md](../agents/READM
 | DELETE | `/api/requests/:id` | withdraw own open request |
 | POST   | `/api/data?name=` | raw ciphertext body (max `MAX_DATA_MB`) → `{ dataHash, size }` |
 | GET    | `/api/offers/:id/data` | the offer's ciphertext (public, check it against `dataHash`) |
-| GET    | `/api/bids/:id/payment` | winner: `{ amount, deadline, description, outputs }` for `createAction` |
-| POST   | `/api/bids/:id/payment` | winner: `{ beef }` (hex AtomicBEEF from `createAction`), idempotent |
+| GET    | `/api/bids/:id/payment` | bidder: `{ amount, pledged, due, fee, outputs (satoshis), keyID, groupOutputs, ... }` |
+| POST   | `/api/bids/:id/payment` | bidder: `{ beef, pledges: [{ vout, unlockingScript }], keyID }`, idempotent |
+| GET    | `/api/bids/:id/refund` | buyer out of the group: `{ fee, pledges }` to sign |
+| POST   | `/api/bids/:id/refund` | buyer: `{ beef }`, must spend all their unused pledges |
 | GET    | `/api/seller/tasks` | seller: payments to claim (`claim`) and keys to deliver (`deliver`) |
 | POST   | `/api/bids/:id/claimed` | seller: payment taken into the wallet |
 | POST   | `/api/bids/:id/delivery` | seller: `{ wrappedKey }` (hex) |
@@ -96,4 +113,5 @@ Agents do not have to call this directly: see [agents/README.md](../agents/READM
 | POST   | `/api/bids/:id/receipt` | buyer: `{ ok, reason? }` |
 
 Offers in a listing include `bidCount`, and while open `payers` / `share`: what the
-settlement would give on the current bids. Individual maxima of other buyers are not exposed.
+settlement would give on the funded bids. The API does not expose other buyers' maxima, but
+pledge amounts are public on-chain.

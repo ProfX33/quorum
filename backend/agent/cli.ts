@@ -15,11 +15,11 @@ const USAGE = `Options: --wallet <name> (default: agent); API_URL sets the backe
   search [--q --kind --category --region --status]
   offer <offerId>
   bids                             offers you have bid on, with their state in myBid
-  bid <offerId> <maxPrice>         place or update your maximum, in satoshis
+  bid <offerId> <maxPrice>         place or update your maximum, in satoshis, and pledge it
   withdraw <offerId>
   request --name --category --region --price <max> [--description] [--minutes 60]
   sell <file> --name --category --region --price [--description] [--minutes 60]
-  pay <bidId>                      pledge your share of a won bid
+  pay <bidId>                      pledge the unpledged rest of an open bid
   refund <bidId>                   take back unused pledges
   download <bidId> [--out <file>]  decrypt delivered data and confirm receipt
   tasks                            payments to claim and keys to deliver, as a seller

@@ -13,6 +13,7 @@ import {
   UnlockingScript,
   Utils,
 } from "@bsv/sdk";
+import { isComplete } from "./settlement.ts";
 
 // Payments are BRC-29 payments with the public "anyone" key (private key 1) as sender.
 // Anybody, this server included, can then derive the seller's payment key from the
@@ -23,16 +24,21 @@ export const ANYONE_KEY = new PrivateKey(1).toPublicKey().toString();
 const anyone = new ProtoWallet("anyone");
 
 // A payment group pays in one transaction, so the seller is paid the full price or not at
-// all (an assurance contract). Each buyer first moves their share into a pledge output
-// locked to a key of their own wallet (PLEDGE_PROTOCOL, counterparty 'self'), then signs
-// that output with ALL|ANYONECANPAY: the signature fixes the outputs (price to the seller,
-// tag) but not the other inputs. Only when the pledges cover the price can the server
-// combine them into a valid transaction; until then every buyer still owns their pledge.
+// all (an assurance contract). A bid is paid for when it is placed: the buyer moves their
+// maximum into pledge outputs locked to a key of their own wallet (PLEDGE_PROTOCOL,
+// counterparty 'self'), split with denominations() so that any share can be spent exactly,
+// and signs each output with ALL|ANYONECANPAY: the signature fixes the outputs (price to the
+// seller, tag) but not the other inputs. Only when the pledges cover the price can the
+// server combine them into a valid transaction, and nobody has to sign anything after the
+// deadline. Until then every buyer still owns their pledges, so there is no custody, and
+// outputs left out of the payment stay theirs.
 export const PLEDGE_PROTOCOL: [2, string] = [2, "datamarket pledge"];
 export const GROUP_SCOPE =
   TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
 /** What every pledge input carries for the mining fee on top of the buyer's share. */
 export const PLEDGE_FEE = Number(process.env.PLEDGE_FEE_SATS ?? 30);
+/** Enough denominations for any bid; a transaction claiming more is not one of ours. */
+const MAX_PLEDGE_OUTPUTS = 64;
 
 export const NETWORK = process.env.BSV_NETWORK === "test" ? "test" : "main";
 const ARCADE_URL = (process.env.ARCADE_URL ?? "https://arcade-v2-us-1.bsvblockchain.tech").replace(/\/+$/, "");
@@ -160,18 +166,11 @@ const isP2PKH = (script: LockingScript) => {
   return c.length === 5 && c[0]!.op === 0x76 && c[1]!.op === 0xa9 && c[2]!.data?.length === 20 && c[3]!.op === 0x88 && c[4]!.op === 0xac;
 };
 
-/**
- * Checks a pledge: `beef` (AtomicBEEF) creates a P2PKH output `vout`, and `unlockingScript`
- * spends it with an ALL|ANYONECANPAY signature over the group outputs, so the server can
- * use it in the group payment, but only there.
- */
-export async function parsePledge(beef: number[], vout: unknown, unlockingScript: string, outputs: GroupOutput[]) {
-  let tx: Transaction;
-  try {
-    tx = Transaction.fromAtomicBEEF(beef);
-  } catch {
-    return { error: "The pledge is not a valid AtomicBEEF transaction" };
-  }
+/** Checks one output of a pledge; see parsePledge. */
+function parsePledgeOutput(
+  tx: Transaction, vout: unknown, unlockingScript: unknown, outputs: GroupOutput[],
+): { error: string } | { vout: number; satoshis: number; unlockingScript: string } {
+  if (typeof unlockingScript !== "string") return { error: "unlockingScript must be hex" };
   const output = Number.isInteger(vout) ? tx.outputs[vout as number] : undefined;
   if (!output || !isP2PKH(output.lockingScript)) return { error: "vout must point at the P2PKH pledge output" };
   const satoshis = output.satoshis ?? 0;
@@ -206,6 +205,35 @@ export async function parsePledge(beef: number[], vout: unknown, unlockingScript
   } catch {
     return { error: "The pledge signature does not unlock the pledge for this offer's group payment" };
   }
+  return { vout: vout as number, satoshis, unlockingScript: unlock.toHex() };
+}
+
+/**
+ * Checks a pledge: `beef` (AtomicBEEF) creates P2PKH outputs, and each entry of `pledges`
+ * ({ vout, unlockingScript }) spends one with an ALL|ANYONECANPAY signature over the group
+ * outputs, so the server can use it in the group payment, but only there. Together they
+ * must be denominated, or some share could not be paid without burning the difference.
+ */
+export async function parsePledge(beef: number[], pledges: unknown, outputs: GroupOutput[]) {
+  if (!Array.isArray(pledges) || pledges.length === 0 || pledges.length > MAX_PLEDGE_OUTPUTS) {
+    return { error: `pledges must list 1 to ${MAX_PLEDGE_OUTPUTS} outputs` };
+  }
+  let tx: Transaction;
+  try {
+    tx = Transaction.fromAtomicBEEF(beef);
+  } catch {
+    return { error: "The pledge is not a valid AtomicBEEF transaction" };
+  }
+  const parsed = [];
+  for (const p of pledges) {
+    const output = parsePledgeOutput(tx, p?.vout, p?.unlockingScript, outputs);
+    if ("error" in output) return output;
+    parsed.push(output);
+  }
+  if (new Set(parsed.map((p) => p.vout)).size !== parsed.length) return { error: "A pledge lists an output twice" };
+  if (!isComplete(parsed.map((p) => p.satoshis - PLEDGE_FEE))) {
+    return { error: "A pledge must be split into the denominations the payment request gives" };
+  }
 
   // The wallet has usually broadcast the pledge already, so only a definite script failure
   // rejects it here. If the BEEF is merely incomplete for a local check, the network decides.
@@ -216,7 +244,7 @@ export async function parsePledge(beef: number[], vout: unknown, unlockingScript
     if (/script evaluation/i.test(message)) return { error: `The pledge transaction does not verify: ${message}` };
     console.warn(`Pledge ${tx.id("hex")} not verifiable locally, leaving it to the network: ${message}`);
   }
-  return { tx, txid: tx.id("hex"), vout: vout as number, satoshis, unlockingScript: unlock.toHex() };
+  return { tx, txid: tx.id("hex"), outputs: parsed };
 }
 
 /**

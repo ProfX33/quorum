@@ -300,8 +300,8 @@ const server = Bun.serve({
       });
     },
 
-    // A winner gets what to pledge, then submits the pledge:
-    // { beef (AtomicBEEF hex), vout, unlockingScript (ALL|ANYONECANPAY), keyID }.
+    // A bidder gets what to pledge for their maximum, then submits the pledge:
+    // { beef (AtomicBEEF hex), pledges: [{ vout, unlockingScript (ALL|ANYONECANPAY) }], keyID }.
     "/api/bids/:id/payment": {
       GET: async (req) => {
         const user = await userFromRequest(req);
