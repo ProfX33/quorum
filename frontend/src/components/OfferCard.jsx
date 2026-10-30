@@ -38,7 +38,7 @@ export function Attributes({ item }) {
     <div className="mt-1 flex flex-wrap gap-1">
       <span className="badge badge-primary badge-sm px-3">{item.kind}</span>
       <span className="badge badge-outline badge-sm px-3">{item.category}</span>
-      <span className="badge badge-outline badge-sm px-3">{item.region}</span>
+      {item.region && <span className="badge badge-outline badge-sm px-3">{item.region}</span>}
     </div>
   );
 }
