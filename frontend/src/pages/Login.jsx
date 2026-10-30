@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { loginWithWallet } from '../api';
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -33,6 +33,9 @@ export default function Login({ onLogin }) {
           {busy ? 'Waiting for wallet…' : 'Continue with BSV wallet'}
         </button>
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+        <button onClick={onCancel} className="mt-6 text-sm text-neutral-500 hover:text-black">
+          Back to marketplace
+        </button>
       </div>
     </main>
   );
