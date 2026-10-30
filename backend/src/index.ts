@@ -34,6 +34,16 @@ import {
   withdrawBid,
   withdrawRequest,
 } from "./market.ts";
+import {
+  MAX_AVATAR_BYTES,
+  avatar,
+  publicUser,
+  removeAvatar,
+  setAvatar,
+  updateProfile,
+  userBids,
+  userTransactions,
+} from "./profiles.ts";
 
 const port = Number(process.env.PORT ?? 5000);
 const hostname = process.env.HOST ?? "0.0.0.0"; // all interfaces, so the API is reachable on the local network
@@ -122,6 +132,67 @@ const server = Bun.serve({
     "/api/auth/me": async (req) => {
       const user = await userFromRequest(req);
       return user ? json({ user }) : json({ error: "Unauthorized" }, { status: 401 });
+    },
+
+    // ---------- Profiles ----------
+
+    // The caller's display name: { name } (empty removes it). Returns the updated user.
+    "/api/profile": {
+      PUT: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        const result = await updateProfile(user.id, await readBody(req));
+        return "error" in result ? reply(result) : json({ user: await userFromRequest(req) });
+      },
+    },
+
+    // The caller's picture: raw image body with its Content-Type (PNG, JPEG, GIF, WebP).
+    "/api/profile/avatar": {
+      PUT: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (Number(req.headers.get("content-length") ?? 0) > MAX_AVATAR_BYTES) {
+          return json({ error: "Picture too large" }, { status: 413 });
+        }
+        const result = await setAvatar(user.id, new Uint8Array(await req.arrayBuffer()), req.headers.get("content-type"));
+        return "error" in result ? reply(result) : json({ user: await userFromRequest(req) });
+      },
+      DELETE: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        await removeAvatar(user.id);
+        return json({ user: await userFromRequest(req) });
+      },
+    },
+
+    // A user's public page: profile, sell offers, requests, bids and transactions.
+    "/api/users/:key": async (req) => {
+      const found = isIdentityKey(req.params.key) ? await publicUser(req.params.key) : null;
+      if (!found) return notFound();
+      const viewer = await userFromRequest(req);
+      const filters = { status: "all", ownerId: found.id };
+      const [offers, requests, bids, transactions] = await Promise.all([
+        listOffers(filters, viewer?.id ?? null),
+        listRequests(filters, viewer?.id ?? null),
+        userBids(found.id, viewer?.id ?? null),
+        userTransactions(found.id),
+      ]);
+      return json({ user: found.user, offers, requests, bids, transactions });
+    },
+
+    "/api/users/:key/avatar": async (req) => {
+      const image = isIdentityKey(req.params.key) ? await avatar(req.params.key) : null;
+      if (!image) return notFound();
+      return new Response(image.bytes, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": image.type,
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "default-src 'none'",
+          // The URL carries the upload time, so a new picture gets a new URL.
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
     },
 
     "/api/auth/logout": {

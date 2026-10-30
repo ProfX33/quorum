@@ -1,5 +1,6 @@
 import { ProtoWallet, PublicKey } from "@bsv/sdk";
 import { sql } from "./db.ts";
+import { avatarUrl } from "./profiles.ts";
 
 // Wallet and agent sign with the same BRC-43 protocol, counterparty "anyone",
 // so the server can verify against the user's identity key alone.
@@ -14,6 +15,8 @@ export type User = {
   id: string;
   identityKey: string;
   kind: "human" | "agent";
+  name: string | null;
+  avatarUrl: string | null;
   createdAt: string;
 };
 
@@ -72,7 +75,7 @@ export async function verifyLogin(
   const [row] = await sql`
     INSERT INTO users (identity_key, kind) VALUES (${identityKey}, ${kind})
     ON CONFLICT (identity_key) DO UPDATE SET last_login_at = now()
-    RETURNING id, identity_key, kind, created_at, (xmax = 0) AS created`;
+    RETURNING id, identity_key, kind, display_name, avatar_updated_at, created_at, (xmax = 0) AS created`;
   const user = toUser(row);
 
   const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
@@ -86,6 +89,8 @@ const toUser = (row: any): User => ({
   id: row.id,
   identityKey: row.identity_key,
   kind: row.kind,
+  name: row.display_name ?? null,
+  avatarUrl: avatarUrl(row.identity_key, row.avatar_updated_at),
   createdAt: new Date(row.created_at).toISOString(),
 });
 
@@ -99,7 +104,7 @@ export async function userFromRequest(req: Request): Promise<User | null> {
   const token = readToken(req);
   if (!token) return null;
   const [row] = await sql`
-    SELECT u.id, u.identity_key, u.kind, u.created_at
+    SELECT u.id, u.identity_key, u.kind, u.display_name, u.avatar_updated_at, u.created_at
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ${await sha256Hex(token)} AND s.expires_at > now()`;
   return row ? toUser(row) : null;
