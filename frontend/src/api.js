@@ -37,6 +37,17 @@ export const placeBid = (offerId, maxPrice) => request(`/api/offers/${offerId}/b
 export const withdrawBid = (offerId) => request(`/api/offers/${offerId}/bid`, undefined, 'DELETE');
 export const withdrawRequest = (requestId) => request(`/api/requests/${requestId}`, undefined, 'DELETE');
 
+// Profiles, addressed by identity key. Updates return the signed-in user.
+export const fetchProfile = (identityKey) => request(`/api/users/${identityKey}`);
+export const updateProfile = (name) => request('/api/profile', { name }, 'PUT').then((d) => d.user);
+export const removeAvatar = () => request('/api/profile/avatar', undefined, 'DELETE').then((d) => d.user);
+export async function uploadAvatar(blob) {
+  const res = await fetch('/api/profile/avatar', { method: 'PUT', credentials: 'include', headers: { 'Content-Type': blob.type }, body: blob });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+  return data.user;
+}
+
 /** Signs a server challenge with the user's BSV wallet; creates the account on first login. */
 export async function loginWithWallet() {
   const wallet = getWallet();

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid } from '../api';
 import { canRefund } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
+import { UserLink } from './UserLink';
+
+export { shortKey } from './UserLink';
 
 export function useNow() {
   const [now, setNow] = useState(Date.now());
@@ -12,7 +15,6 @@ export function useNow() {
   return now;
 }
 
-export const shortKey = (key) => `${key.slice(0, 8)}…${key.slice(-6)}`;
 export const sats = (n) => `${n.toLocaleString()} sats`;
 
 export function Countdown({ deadline, now }) {
@@ -58,6 +60,20 @@ export const STATUS_LABEL = {
   disputed: 'Disputed',
   defaulted: 'Payment missed',
 };
+
+// How far each bidder got, as shown next to them on an offer.
+const BIDDER_LABEL = {
+  open: '',
+  won: 'in group',
+  pledged: 'pledged',
+  paid: 'paid',
+  delivered: 'paid',
+  received: 'paid',
+  disputed: 'disputed',
+  defaulted: 'did not pay',
+  lost: 'out',
+};
+const BIDDERS_ON_CARD = 6;
 
 const fileSize = (n) => (n < 1024 * 1024 ? `${Math.ceil(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -148,6 +164,22 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
                 </>
               ) : (
                 `${offer.groupPayment.pledged} of ${offer.groupPayment.members} pledged`
+              )}
+            </dd>
+          </>
+        )}
+        {offer.bidders.length > 0 && (
+          <>
+            <dt className="sr-only">Bidder profiles</dt>
+            <dd className="col-start-2 flex flex-wrap gap-x-4 gap-y-1">
+              {(linked ? offer.bidders.slice(0, BIDDERS_ON_CARD) : offer.bidders).map((b) => (
+                <span key={b.identityKey} className="inline-flex min-w-0 items-center gap-1">
+                  <UserLink person={b} you={b.identityKey === user?.identityKey} />
+                  {BIDDER_LABEL[b.status] && <span className="text-white/50">· {BIDDER_LABEL[b.status]}</span>}
+                </span>
+              ))}
+              {linked && offer.bidders.length > BIDDERS_ON_CARD && (
+                <a href={`#/offers/${offer.id}`} className="link link-hover">+{offer.bidders.length - BIDDERS_ON_CARD} more</a>
               )}
             </dd>
           </>

@@ -13,6 +13,13 @@ export async function migrate() {
       created_at timestamptz NOT NULL DEFAULT now(),
       last_login_at timestamptz NOT NULL DEFAULT now()
     )`;
+  // Profile: a display name and a picture (stored here, served by /api/users/:key/avatar).
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS display_name text,
+      ADD COLUMN IF NOT EXISTS avatar bytea,
+      ADD COLUMN IF NOT EXISTS avatar_type text,
+      ADD COLUMN IF NOT EXISTS avatar_updated_at timestamptz`;
   await sql`
     CREATE TABLE IF NOT EXISTS login_challenges (
       nonce text PRIMARY KEY,

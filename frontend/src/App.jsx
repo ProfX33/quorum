@@ -4,16 +4,24 @@ import SellerWorker from './components/SellerWorker';
 import Login from './pages/Login';
 import Market from './pages/Market';
 import OfferDetail from './pages/OfferDetail';
+import Profile from './pages/Profile';
 
-const offerIdFromHash = () => window.location.hash.match(/^#\/offers\/([\w-]+)$/)?.[1] ?? null;
+/** The page in the URL hash: #/offers/<id>, #/users/<identity key>, or the market. */
+const routeFromHash = () => {
+  const [, page, id] = window.location.hash.match(/^#\/(offers|users)\/([\w-]+)$/) ?? [];
+  return page ? { page, id } : { page: 'market' };
+};
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = loading
   const [signingIn, setSigningIn] = useState(false);
-  const [offerId, setOfferId] = useState(offerIdFromHash);
+  const [route, setRoute] = useState(routeFromHash);
 
   useEffect(() => {
-    const onHash = () => setOfferId(offerIdFromHash());
+    const onHash = () => {
+      setRoute(routeFromHash());
+      window.scrollTo(0, 0);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -28,11 +36,11 @@ export default function App() {
   }
   return (
     <>
-      {offerId ? (
-        <OfferDetail id={offerId} user={user} onSignIn={() => setSigningIn(true)} />
-      ) : (
-        <Market user={user} onSignIn={() => setSigningIn(true)} onLogout={() => setUser(null)} />
+      {route.page === 'offers' && <OfferDetail id={route.id} user={user} onSignIn={() => setSigningIn(true)} />}
+      {route.page === 'users' && (
+        <Profile identityKey={route.id} user={user} onSignIn={() => setSigningIn(true)} onUserChange={setUser} />
       )}
+      {route.page === 'market' && <Market user={user} onSignIn={() => setSigningIn(true)} onLogout={() => setUser(null)} />}
       <SellerWorker user={user} />
     </>
   );

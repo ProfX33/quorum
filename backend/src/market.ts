@@ -1,5 +1,6 @@
 import { sql } from "./db.ts";
 import { PLEDGE_FEE, derivationNonce, txUrl } from "./payments.ts";
+import { person } from "./profiles.ts";
 import { findPaymentGroup } from "./settlement.ts";
 
 export const KINDS = ["data", "service", "product"] as const;
@@ -46,7 +47,15 @@ function parseListing(body: Record<string, unknown>): Listing | string {
   return { kind: kind as Kind, category, region, name, description, deadline };
 }
 
-export type Filters = { q?: string | null; kind?: string | null; category?: string | null; region?: string | null; status?: string | null; myBids?: boolean };
+export type Filters = {
+  q?: string | null;
+  kind?: string | null;
+  category?: string | null;
+  region?: string | null;
+  status?: string | null; myBids?: boolean;
+  // Only the listings of one user (their profile page); not taken from the URL.
+  ownerId?: string | null;
+};
 
 export function filtersFrom(url: URL): Filters {
   const p = url.searchParams;
@@ -78,6 +87,12 @@ const toOffer = (row: any, userId: string | null) => {
     status: row.status,
     paymentDeadline: row.payment_deadline ? new Date(row.payment_deadline).toISOString() : null,
     seller: row.seller_key,
+    sellerProfile: person(row.seller_key, row.seller_name, row.seller_avatar_at),
+    // Who bid, and how far each bid got; their maxima stay private.
+    bidders: (typeof row.bidders === "string" ? JSON.parse(row.bidders) : row.bidders).map((b: any) => ({
+      ...person(b.key, b.name, b.avatarAt),
+      status: b.status,
+    })),
     sellerKind: row.seller_kind,
     createdAt: new Date(row.created_at).toISOString(),
     settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
@@ -119,8 +134,12 @@ const toOffer = (row: any, userId: string | null) => {
 export async function listOffers(filters: Filters, userId: string | null, id: string | null = null) {
   const status = filters.status === "all" || ["sold", "unsold"].includes(filters.status ?? "") ? filters.status! : "open";
   const rows = await sql`
-    SELECT s.*, u.identity_key AS seller_key, u.kind AS seller_kind,
+    SELECT s.*, u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at, u.kind AS seller_kind,
       COALESCE((SELECT json_agg(b.max_price ORDER BY b.created_at) FROM buy_offers b WHERE b.sell_offer_id = s.id), '[]') AS bid_maxima,
+      COALESCE((SELECT json_agg(json_build_object(
+          'key', bu.identity_key, 'name', bu.display_name, 'avatarAt', bu.avatar_updated_at, 'status', b.status)
+          ORDER BY b.created_at)
+        FROM buy_offers b JOIN users bu ON bu.id = b.buyer_id WHERE b.sell_offer_id = s.id), '[]') AS bidders,
       (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = ANY(${GROUP_STATES})) AS winner_count,
       (SELECT json_object_agg(g.status, g.n) FROM (
         SELECT b.status, count(*) AS n FROM buy_offers b
@@ -140,6 +159,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
     WHERE (${id}::uuid IS NULL OR s.id = ${id}::uuid)
       AND (${!filters.myBids}::boolean OR my.id IS NOT NULL)
       AND (${id}::uuid IS NOT NULL OR ${status}::text = 'all' OR s.status = ${status}::text)
+      AND (${filters.ownerId ?? null}::uuid IS NULL OR s.seller_id = ${filters.ownerId ?? null}::uuid)
       AND (${exact(filters.kind)}::text IS NULL OR s.kind = ${exact(filters.kind)}::text)
       AND (${exact(filters.category)}::text IS NULL OR s.category ILIKE ${exact(filters.category)}::text)
       AND (${exact(filters.region)}::text IS NULL OR s.region ILIKE ${exact(filters.region)}::text)
@@ -225,6 +245,7 @@ const toRequest = (row: any, userId: string | null) => ({
   deadline: new Date(row.deadline).toISOString(),
   status: row.status,
   buyer: row.buyer_key,
+  buyerProfile: person(row.buyer_key, row.buyer_name, row.buyer_avatar_at),
   createdAt: new Date(row.created_at).toISOString(),
   mine: userId !== null && row.buyer_id === userId,
 });
@@ -232,10 +253,11 @@ const toRequest = (row: any, userId: string | null) => ({
 export async function listRequests(filters: Filters, userId: string | null) {
   const status = filters.status === "all" || filters.status === "expired" ? filters.status : "open";
   const rows = await sql`
-    SELECT b.*, u.identity_key AS buyer_key
+    SELECT b.*, u.identity_key AS buyer_key, u.display_name AS buyer_name, u.avatar_updated_at AS buyer_avatar_at
     FROM buy_offers b JOIN users u ON u.id = b.buyer_id
     WHERE b.sell_offer_id IS NULL
       AND (${status}::text = 'all' OR b.status = ${status}::text)
+      AND (${filters.ownerId ?? null}::uuid IS NULL OR b.buyer_id = ${filters.ownerId ?? null}::uuid)
       AND (${exact(filters.kind)}::text IS NULL OR b.kind = ${exact(filters.kind)}::text)
       AND (${exact(filters.category)}::text IS NULL OR b.category ILIKE ${exact(filters.category)}::text)
       AND (${exact(filters.region)}::text IS NULL OR b.region ILIKE ${exact(filters.region)}::text)
