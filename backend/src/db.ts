@@ -184,6 +184,20 @@ export async function migrate() {
       CHECK (body <> '' OR image IS NOT NULL)
     )`;
   await sql`CREATE INDEX IF NOT EXISTS messages_offer ON messages (offer_id, created_at)`;
+  // Files with the information the seller hands over for a sold offer, e.g. access details
+  // of a service. Unlike the data of a data offer they are not encrypted; only the seller
+  // and the paying buyers can download them.
+  await sql`
+    CREATE TABLE IF NOT EXISTS deal_files (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      offer_id uuid NOT NULL REFERENCES sell_offers(id) ON DELETE CASCADE,
+      uploader_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      size integer NOT NULL,
+      bytes bytea NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS deal_files_offer ON deal_files (offer_id, created_at)`;
 
   // Pledges are signed while bidding, so an open offer needs its group payment key already.
   await sql`

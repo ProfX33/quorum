@@ -36,7 +36,19 @@ import {
   withdrawOffer,
   withdrawRequest,
 } from "./market.ts";
-import { MAX_IMAGE_BYTES, listMessages, messageImage, postMessage } from "./messages.ts";
+import {
+  MAX_FILE_BYTES,
+  MAX_IMAGE_BYTES,
+  dealFile,
+  deleteFile,
+  inChat,
+  listFiles,
+  listMessages,
+  messageImage,
+  postMessage,
+  subscribe,
+  uploadFile,
+} from "./messages.ts";
 import {
   MAX_AVATAR_BYTES,
   avatar,
@@ -395,6 +407,92 @@ const server = Bun.serve({
         if (!form) return json({ error: "Expected multipart form data" }, { status: 400 });
         const result = await postMessage(user.id, req.params.id, form);
         return "error" in result ? reply(result) : json(result, { status: 201 });
+      },
+    },
+
+    // Server-sent events of an offer's chat: "ready" on every (re)connect, then "message"
+    // with each new message and "files" whenever the seller's files change.
+    "/api/offers/:id/events": async (req, server) => {
+      const user = await userFromRequest(req);
+      if (!user) return unauthorized();
+      if (!isUuid(req.params.id)) return notFound();
+      const offerId = req.params.id;
+      if (!(await inChat(user.id, offerId))) return json({ error: "Not in this chat" }, { status: 403 });
+      server.timeout(req, 0); // the stream stays open; pings keep proxies from closing it
+      const encoder = new TextEncoder();
+      let stop = () => {};
+      const stream = new ReadableStream({
+        start(controller) {
+          const write = (chunk: string) => {
+            try {
+              controller.enqueue(encoder.encode(chunk));
+            } catch {
+              stop();
+            }
+          };
+          const send = (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          const unsubscribe = subscribe(offerId, { userId: user.id, send });
+          const ping = setInterval(() => write(": ping\n\n"), 15_000);
+          stop = () => {
+            unsubscribe();
+            clearInterval(ping);
+          };
+          req.signal.addEventListener("abort", () => {
+            stop();
+            try {
+              controller.close();
+            } catch {}
+          });
+          send("ready", {});
+        },
+        cancel: () => stop(),
+      });
+      return new Response(stream, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform" },
+      });
+    },
+
+    // Files with information for the buyers: the seller uploads them (raw body, ?name=).
+    "/api/offers/:id/files": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        return isUuid(req.params.id) ? reply(await listFiles(user.id, req.params.id)) : notFound();
+      },
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        if (Number(req.headers.get("content-length") ?? 0) > MAX_FILE_BYTES) {
+          return json({ error: "File too large" }, { status: 413 });
+        }
+        const name = new URL(req.url).searchParams.get("name") ?? "file";
+        const result = await uploadFile(user.id, req.params.id, new Uint8Array(await req.arrayBuffer()), name);
+        return "error" in result ? reply(result) : json(result, { status: 201 });
+      },
+    },
+
+    "/api/deal-files/:id": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        const file = isUuid(req.params.id) ? await dealFile(user.id, req.params.id) : null;
+        if (!file) return notFound();
+        // Always a download, never rendered: the seller chooses what is in it.
+        return new Response(file.bytes, {
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="file"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+          },
+        });
+      },
+      DELETE: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        return isUuid(req.params.id) ? reply(await deleteFile(user.id, req.params.id)) : notFound();
       },
     },
 

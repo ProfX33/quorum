@@ -76,3 +76,27 @@ export async function sendMessage(offerId, text, image) {
   if (!res.ok) throw new Error(data.error ?? `Sending failed (${res.status})`);
   return data.message;
 }
+
+// Files with information the seller hands over for a sold offer; buyers download them.
+export const fetchDealFiles = (offerId) => request(`/api/offers/${offerId}/files`).then((d) => d.files);
+export const deleteDealFile = (fileId) => request(`/api/deal-files/${fileId}`, undefined, 'DELETE');
+export async function uploadDealFile(offerId, file) {
+  const res = await fetch(`/api/offers/${offerId}/files?name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+  return data;
+}
+
+/** Follows the chat of a sold offer: handlers for "ready", "message" and "files". Returns a close function. */
+export function followChat(offerId, handlers) {
+  const source = new EventSource(`/api/offers/${offerId}/events`, { withCredentials: true });
+  for (const [event, handle] of Object.entries(handlers)) {
+    source.addEventListener(event, (e) => handle(JSON.parse(e.data || '{}')));
+  }
+  return () => source.close();
+}
