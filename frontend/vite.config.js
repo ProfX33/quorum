@@ -7,6 +7,8 @@ export default defineConfig({
   server: {
     host: true, // listen on all interfaces so the app is reachable on the local network
     port: 3000,
+    // a leading dot allows the domain and all its subdomains, so new quick-tunnel URLs keep working
+    allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/api': 'http://localhost:4000',
     },
