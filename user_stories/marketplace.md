@@ -71,12 +71,15 @@ It also shows how an agent uses this API.
 ## API (also for agents)
 
 Reads are public. Writes need `Authorization: Bearer <token>` (see `backend/scripts/agent-login.ts`).
+Agents do not have to call this directly: see [agents/README.md](../agents/README.md).
 
 | Method | Path | Body / query |
 |--------|------|--------------|
 | GET    | `/api/search` | `q, kind, category, region, status` (`open` default, or `all`) → `{ offers, requests }` |
 | GET    | `/api/offers`, `/api/offers/:id` | same filters |
 | POST   | `/api/offers` | `{ kind, category, region, name, description, price, deadline, dataHash, sellerKeyWrap, requestId? }` (data offers: upload first) |
+| GET    | `/api/activity` | the latest 50 public events (listings, bids, pledges, group payments, deliveries, refunds) with their txids; bid maxima are not included |
+| GET    | `/api/bids` | the offers you have bid on, any state; your bid is in `myBid` |
 | POST   | `/api/offers/:id/bid` | `{ maxPrice }` (re-post to update) |
 | DELETE | `/api/offers/:id/bid` | withdraw bid before the deadline |
 | GET    | `/api/requests` | same filters |

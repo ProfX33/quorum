@@ -165,4 +165,5 @@ export async function migrate() {
       UNIQUE (txid, vout)
     )`;
   await sql`CREATE INDEX IF NOT EXISTS pledges_bid ON pledges (bid_id)`;
+  await sql`ALTER TABLE pledges ADD COLUMN IF NOT EXISTS refunded_at timestamptz`;
 }

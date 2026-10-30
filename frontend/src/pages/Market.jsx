@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { logout, searchMarket } from '../api';
+import Activity from '../components/Activity';
 import ListingForm from '../components/ListingForm';
 import { OfferCard, useNow } from '../components/OfferCard';
 import RequestCard from '../components/RequestCard';
@@ -84,11 +85,12 @@ export default function Market({ user, onSignIn, onLogout }) {
             {[
               ['offers', 'Sell offers', results.offers.filter((o) => viewOf(o, now) === 'active').length],
               ['requests', 'Buy requests', results.requests.filter((r) => viewOf(r, now) === 'active').length],
+              ['activity', 'Live activity'],
             ].map(([key, label, count]) => (
               <li key={key}>
                 <button role="tab" onClick={() => setTab(key)} className={tab === key ? 'menu-active' : ''}>
                   {label}
-                  <span className="text-sm font-semibold tabular-nums opacity-70">{count}</span>
+                  {count !== undefined && <span className="badge badge-sm">{count}</span>}
                 </button>
               </li>
             ))}
@@ -117,6 +119,7 @@ export default function Market({ user, onSignIn, onLogout }) {
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-10">
+        {tab === 'activity' ? <Activity /> : <>
         <section className="card card-border bg-base-200">
           <div className="card-body gap-6 p-6">
             {/* Find: free text and attribute filters */}
@@ -236,7 +239,8 @@ export default function Market({ user, onSignIn, onLogout }) {
                 />
               ))}
         </div>
-      </main>
+          </>}
+    </main>
     </div>
   );
 }

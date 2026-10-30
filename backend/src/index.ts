@@ -27,6 +27,7 @@ import {
   createRequest,
   filtersFrom,
   isUuid,
+  listActivity,
   listOffers,
   listRequests,
   placeBid,
@@ -214,6 +215,9 @@ const server = Bun.serve({
       return json({ offers, requests });
     },
 
+    // What is happening on the market, public: the live feed of the web app.
+    "/api/activity": async () => json({ events: await listActivity() }),
+
     "/api/offers": {
       GET: async (req) => {
         const user = await userFromRequest(req);
@@ -231,6 +235,13 @@ const server = Bun.serve({
       const user = await userFromRequest(req);
       const [offer] = await listOffers({}, user?.id ?? null, req.params.id);
       return offer ? json({ offer }) : json({ error: "Not found" }, { status: 404 });
+    },
+
+    // The offers the caller has bid on, whatever their state: how an agent follows its bids.
+    "/api/bids": async (req) => {
+      const user = await userFromRequest(req);
+      if (!user) return unauthorized();
+      return json({ offers: await listOffers({ status: "all", myBids: true }, user.id) });
     },
 
     // A buyer states the maximum they would pay; re-posting updates it.

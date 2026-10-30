@@ -17,6 +17,8 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:4000")
 BUDGET_SATS = int(os.getenv("AGENT_BUDGET_SATS", "10000"))
 ESTIMATED_FEE_SATS = int(os.getenv("ESTIMATED_FEE_SATS", "150"))
 USE_MOCK_LLM = os.getenv("USE_MOCK_LLM", "False").lower() == "true"
+AGENT_WALLET = os.getenv("AGENT_WALLET", "buyer")
+BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
 
 # Mission & Suchprofil des Agenten
 AGENT_MISSION = {
@@ -55,33 +57,30 @@ class BuyerAgent:
     # ---------------------------------------------------------
     # AUTHENTIFIZIERUNG (via TypeScript Subprocess)
     # ---------------------------------------------------------
+    def cli(self, *args: str) -> dict:
+        """Ruft die Agent-CLI auf. Der Private Key bleibt in deren Wallet und landet nie in Python oder LLM-Prompts."""
+        result = subprocess.run(
+            ["bun", "agent/cli.ts", "--wallet", AGENT_WALLET, *args],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "API_URL": BACKEND_URL},
+        )
+        data = json.loads(result.stdout)
+        if result.returncode != 0:
+            raise RuntimeError(data.get("error", result.stderr))
+        return data
+
     def authenticate(self) -> bool:
-        """Ruft backend/scripts/agent-login.ts auf, um einen gültigen Bearer-Token zu holen."""
+        """Holt über die Agent-CLI einen gültigen Bearer-Token (BSV Challenge-Response)."""
         print("[Auth] Hole Agent-Token über BSV Challenge-Response...")
         try:
-            # Führt das bestehende TS-Skript im backend-Ordner aus
-            result = subprocess.run(
-                ["bun", "run", "scripts/agent-login.ts"],
-                cwd="../backend",
-                capture_output=True,
-                text=True,
-                timeout=15
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                # Nimmt die letzte Zeile oder parst JSON, falls das Skript JSON ausgibt
-                out = result.stdout.strip().splitlines()[-1]
-                try:
-                    data = json.loads(out)
-                    self.token = data.get("token", out)
-                except json.JSONDecodeError:
-                    self.token = out
-                print("[Auth] Erfolgreich eingeloggt!")
-                return True
-            else:
-                print(f"[Auth-Warnung] Login-Skript lieferte keinen Token: {result.stderr}")
-                return False
+            self.token = self.cli("login")["token"]
+            print("[Auth] Erfolgreich eingeloggt!")
+            return True
         except Exception as e:
-            print(f"[Auth-Fallback] Konnte bun-Skript nicht starten ({e}). Arbeite im Read-Only/Mock-Modus.")
+            print(f"[Auth-Fallback] Login fehlgeschlagen ({e}). Arbeite im Read-Only/Mock-Modus.")
             return False
 
     def get_headers(self) -> dict:
@@ -255,48 +254,44 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
     # SETTLEMENT & BLOCKCHAIN-ZAHLUNG (myBid.status == "won")
     # ---------------------------------------------------------
     def check_settlements_and_pay(self, offers: list[dict]):
-        """Prüft abgerechnete Angebote. Wenn myBid.status == 'won', wird der finale Share bezahlt."""
+        """Prüft abgerechnete Angebote: gewonnene Anteile pledgen, gelieferte Daten abholen."""
         for offer in offers:
             offer_id = offer.get("id")
             my_bid = offer.get("myBid")
-            if not my_bid or offer_id in self.paid_offers:
+            if not my_bid:
                 continue
 
             status = my_bid.get("status")
             final_amount = my_bid.get("amount")
 
-            if status == "won" and final_amount is not None:
+            if status == "won" and final_amount is not None and offer_id not in self.paid_offers:
                 total_cost = final_amount + ESTIMATED_FEE_SATS
                 print(f"\n[Settlement GEWONNEN!] Offer '{offer.get('name')}' wurde abgerechnet!")
                 print(f"Finaler Gruppen-Anteil: {final_amount} Sats (+ ~{ESTIMATED_FEE_SATS} Sats Netzwerkgebühr)")
 
                 # Blockchain-Zahlung anstoßen
-                self.trigger_bsv_payment(
-                    seller_pubkey=offer.get("seller", ""),
-                    amount_sats=final_amount,
-                    offer_id=offer_id
-                )
-                self.budget_sats -= total_cost
-                self.paid_offers.add(offer_id)
-                print(f"[State Update] Neues Restbudget nach Abzug von Share & Fees: {self.budget_sats} Sats")
+                if self.trigger_bsv_payment(my_bid["id"], final_amount):
+                    self.budget_sats -= total_cost
+                    self.paid_offers.add(offer_id)
+                    print(f"[State Update] Neues Restbudget nach Abzug von Share & Fees: {self.budget_sats} Sats")
 
-    def trigger_bsv_payment(self, seller_pubkey: str, amount_sats: int, offer_id: str):
-        """Ruft das lokale TypeScript-BSV-Skript auf, ohne dass Private Keys jemals in Python/LLM-Prompts landen."""
-        print(f"[BSV-Chain] Führe On-Chain-Zahlung über {amount_sats} Sats an {seller_pubkey[:16]}... aus...")
+            elif status == "delivered":
+                try:
+                    saved = self.cli("download", my_bid["id"])
+                    print(f"[Lieferung] '{offer.get('name')}' entschlüsselt: {saved['file']} ({saved['bytes']} Bytes)")
+                except Exception as e:
+                    print(f"[Lieferung-Warnung] Download fehlgeschlagen ({e}).")
+
+    def trigger_bsv_payment(self, bid_id: str, amount_sats: int) -> bool:
+        """Pledged den Anteil. Die Zahlung geht erst raus, wenn die ganze Gruppe gepledged hat."""
+        print(f"[BSV-Chain] Pledge über {amount_sats} Sats für Gebot {bid_id}...")
         try:
-            result = subprocess.run(
-                ["bun", "run", "scripts/agent-pay.ts", seller_pubkey, str(amount_sats), offer_id],
-                cwd="../backend",
-                capture_output=True,
-                text=True,
-                timeout=20
-            )
-            if result.returncode == 0:
-                print(f"[BSV-Chain Erfolg]: {result.stdout.strip()}")
-            else:
-                print(f"[BSV-Chain Info]: Zahlungsskript noch im Aufbau ({result.stderr.strip()})")
+            result = self.cli("pay", bid_id)
+            print(f"[BSV-Chain Erfolg]: Status {result['status']}, {result['pledged']}/{result['amount']} Sats gepledged.")
+            return True
         except Exception as e:
-            print(f"[BSV-Chain Simulation] Subprozess übersprungen ({e}). Zahlung lokal vermerkt.")
+            print(f"[BSV-Chain Fehler]: {e}")
+            return False
 
     # ---------------------------------------------------------
     # HAUPTSCHLEIFE (Sense -> Think -> Act)

@@ -52,7 +52,7 @@ export type Filters = {
   kind?: string | null;
   category?: string | null;
   region?: string | null;
-  status?: string | null;
+  status?: string | null; myBids?: boolean;
   // Only the listings of one user (their profile page); not taken from the URL.
   ownerId?: string | null;
 };
@@ -93,6 +93,7 @@ const toOffer = (row: any, userId: string | null) => {
       ...person(b.key, b.name, b.avatarAt),
       status: b.status,
     })),
+    sellerKind: row.seller_kind,
     createdAt: new Date(row.created_at).toISOString(),
     settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
     bidCount: maxima.length,
@@ -133,7 +134,7 @@ const toOffer = (row: any, userId: string | null) => {
 export async function listOffers(filters: Filters, userId: string | null, id: string | null = null) {
   const status = filters.status === "all" || ["sold", "unsold"].includes(filters.status ?? "") ? filters.status! : "open";
   const rows = await sql`
-    SELECT s.*, u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at,
+    SELECT s.*, u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at, u.kind AS seller_kind,
       COALESCE((SELECT json_agg(b.max_price ORDER BY b.created_at) FROM buy_offers b WHERE b.sell_offer_id = s.id), '[]') AS bid_maxima,
       COALESCE((SELECT json_agg(json_build_object(
           'key', bu.identity_key, 'name', bu.display_name, 'avatarAt', bu.avatar_updated_at, 'status', b.status)
@@ -156,6 +157,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
     LEFT JOIN data_files f ON f.hash = s.data_hash
     LEFT JOIN buy_offers my ON my.sell_offer_id = s.id AND my.buyer_id = ${userId}::uuid
     WHERE (${id}::uuid IS NULL OR s.id = ${id}::uuid)
+      AND (${!filters.myBids}::boolean OR my.id IS NOT NULL)
       AND (${id}::uuid IS NOT NULL OR ${status}::text = 'all' OR s.status = ${status}::text)
       AND (${filters.ownerId ?? null}::uuid IS NULL OR s.seller_id = ${filters.ownerId ?? null}::uuid)
       AND (${exact(filters.kind)}::text IS NULL OR s.kind = ${exact(filters.kind)}::text)
@@ -283,6 +285,63 @@ export async function withdrawRequest(buyerId: string, requestId: string) {
     WHERE id = ${requestId} AND buyer_id = ${buyerId} AND sell_offer_id IS NULL AND status = 'open'
     RETURNING id`;
   return rows.length > 0;
+}
+
+// ---------- Public activity ----------
+
+/**
+ * The latest events of the market, by humans and agents alike, with the transactions behind
+ * them. All of it is public anyway; a bidder's maximum stays private and is not included.
+ */
+export async function listActivity() {
+  const rows = await sql`
+    SELECT * FROM (
+      SELECT 'listed' AS type, s.created_at AS at, s.id AS offer_id, s.name AS offer_name,
+        u.identity_key AS actor, u.kind AS actor_kind, s.price AS satoshis, NULL::text AS txid
+      FROM sell_offers s JOIN users u ON u.id = s.seller_id
+      UNION ALL
+      SELECT 'bid', b.created_at, s.id, s.name, u.identity_key, u.kind, NULL, NULL
+      FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
+      UNION ALL
+      SELECT s.status, s.settled_at, s.id, s.name, u.identity_key, u.kind, s.price, NULL
+      FROM sell_offers s JOIN users u ON u.id = s.seller_id
+      WHERE s.settled_at IS NOT NULL
+      UNION ALL
+      SELECT 'pledge', p.created_at, s.id, s.name, u.identity_key, u.kind, p.satoshis, p.txid
+      FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
+      JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
+      WHERE p.status <> 'spent'
+      UNION ALL
+      SELECT 'payment', s.paid_at, s.id, s.name, u.identity_key, u.kind, s.price, s.payment_txid
+      FROM sell_offers s JOIN users u ON u.id = s.seller_id
+      WHERE s.payment_txid IS NOT NULL
+      UNION ALL
+      SELECT 'delivered', b.delivered_at, s.id, s.name, u.identity_key, u.kind, NULL, NULL
+      FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = s.seller_id
+      WHERE b.delivered_at IS NOT NULL
+      UNION ALL
+      SELECT 'received', b.received_at, s.id, s.name, u.identity_key, u.kind, NULL, NULL
+      FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
+      WHERE b.received_at IS NOT NULL
+      UNION ALL
+      SELECT 'refund', p.refunded_at, s.id, s.name, u.identity_key, u.kind, p.satoshis, p.refund_txid
+      FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
+      JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
+      WHERE p.refunded_at IS NOT NULL
+    ) e
+    ORDER BY at DESC
+    LIMIT 50`;
+  return rows.map((r: any) => ({
+    type: r.type,
+    at: new Date(r.at).toISOString(),
+    offerId: r.offer_id,
+    offerName: r.offer_name,
+    actor: r.actor,
+    actorKind: r.actor_kind,
+    satoshis: r.satoshis == null ? null : Number(r.satoshis),
+    txid: r.txid,
+    txUrl: r.txid ? txUrl(r.txid) : null,
+  }));
 }
 
 // ---------- Deadline settlement ----------

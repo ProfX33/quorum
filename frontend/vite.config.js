@@ -11,7 +11,7 @@ export default defineConfig({
     // .local: the Mac's Bonjour name (e.g. MarcBook-Air-96.local); .trycloudflare.com: new quick-tunnel URLs
     allowedHosts: ['.local', '.trycloudflare.com'],
     proxy: {
-      '/api': 'http://localhost:4000',
+      '/api': process.env.API_PROXY ?? 'http://localhost:4000',
     },
   },
 });
