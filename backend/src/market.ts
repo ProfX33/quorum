@@ -36,10 +36,10 @@ type Listing = {
 function parseListing(body: Record<string, unknown>): Listing | string {
   const kind = body.kind ?? "data";
   if (!KINDS.includes(kind as Kind)) return `kind must be one of ${KINDS.join(", ")}`;
-  const category = text(body.category, 100);
-  const region = text(body.region, 100);
+  const category = text(body.category, 100) ?? "other";
+  const region = text(body.region, 100) ?? "";
   const name = text(body.name, 200);
-  if (!category || !region || !name) return "category, region and name are required (max 100/100/200 chars)";
+  if (!name) return "name is required (max 200 chars)";
   const description = typeof body.description === "string" ? body.description.trim().slice(0, 5000) : "";
   const deadline = new Date(typeof body.deadline === "string" || typeof body.deadline === "number" ? body.deadline : NaN);
   const msLeft = deadline.getTime() - Date.now();
