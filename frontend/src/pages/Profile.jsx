@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchProfile, removeAvatar, updateProfile, uploadAvatar } from '../api';
 import { Countdown, OfferCard, sats, useNow } from '../components/OfferCard';
+import Navbar from '../components/Navbar';
 import RequestCard from '../components/RequestCard';
 import { Avatar, UserLink, displayName } from '../components/UserLink';
 
@@ -206,7 +207,7 @@ function TransactionsTable({ transactions }) {
   );
 }
 
-export default function Profile({ identityKey, user, onSignIn, onUserChange }) {
+export default function Profile({ identityKey, user, onSignIn, onLogout, onUserChange, nav }) {
   const now = useNow();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -243,18 +244,9 @@ export default function Profile({ identityKey, user, onSignIn, onUserChange }) {
   ];
 
   return (
+    <>
+      <Navbar user={user} onSignIn={onSignIn} onLogout={onLogout} nav={nav} />
     <div className="mx-auto max-w-5xl px-6 py-10">
-      <header className="navbar bg-base-200 rounded-box px-4 text-sm">
-        <div className="navbar-start breadcrumbs">
-          <ul>
-            <li><a href="#/">Market</a></li>
-            <li>{person ? displayName(person) : 'Profile'}</li>
-          </ul>
-        </div>
-        <div className="navbar-end">
-          {!user && <button onClick={onSignIn} className="btn btn-primary btn-sm">Sign in</button>}
-        </div>
-      </header>
 
       {error && (
         <div role="alert" className="alert alert-error alert-soft mt-8 text-sm">
@@ -328,5 +320,6 @@ export default function Profile({ identityKey, user, onSignIn, onUserChange }) {
         </>
       )}
     </div>
+    </>
   );
 }

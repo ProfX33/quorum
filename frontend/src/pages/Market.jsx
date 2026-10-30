@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { logout, searchMarket } from '../api';
+import { searchMarket } from '../api';
 import Activity from '../components/Activity';
 import ListingForm from '../components/ListingForm';
 import { OfferCard, useNow } from '../components/OfferCard';
 import RequestCard from '../components/RequestCard';
-import { Avatar, displayName, profileHref } from '../components/UserLink';
+import Navbar from '../components/Navbar';
 
 const REFRESH_MS = 5000;
 
@@ -31,16 +31,15 @@ function viewOf(item, now) {
 
 const isRelated = (item, tab) => item.mine || (tab === 'offers' && !!item.myBid);
 
-export default function Market({ user, onSignIn, onLogout }) {
+export default function Market({ user, onSignIn, onLogout, nav }) {
+  const { activeTab: tab, setTab, form, setForm } = nav;
   const now = useNow();
-  const [tab, setTab] = useState('offers');
   const [filters, setFilters] = useState({ q: '', kind: '', category: '', region: '' });
   const [view, setView] = useState('active');
   const [sort, setSort] = useState('newest');
   const [onlyMine, setOnlyMine] = useState(false);
   const [results, setResults] = useState({ offers: [], requests: [] });
   const [error, setError] = useState('');
-  const [form, setForm] = useState(null); // { mode, answering? }
 
   const load = useCallback(
     () =>
@@ -59,17 +58,6 @@ export default function Market({ user, onSignIn, onLogout }) {
     return () => clearInterval(t);
   }, [load]);
 
-  async function handleLogout() {
-    await logout();
-    onLogout();
-  }
-
-  // The form lives in the listings, which the activity tab replaces.
-  function openForm(mode) {
-    setForm({ mode });
-    if (tab === 'activity') setTab(mode === 'offer' ? 'offers' : 'requests');
-  }
-
   const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
   const all = tab === 'offers' ? results.offers : results.requests;
   const visible = all.filter((i) => (!onlyMine || (!!user && isRelated(i, tab))));
@@ -80,49 +68,16 @@ export default function Market({ user, onSignIn, onLogout }) {
 
   return (
     <div className="min-h-screen">
-      <header className="navbar sticky top-0 z-10 border-b border-white/10 bg-base-200 px-6">
-        <div className="navbar-start">
-          <a href="#/" aria-label="Home">
-            <img src="/logo.svg" alt="Logo" className="h-8" />
-          </a>
-        </div>
-        <nav className="navbar-center">
-          <ul role="tablist" className="menu menu-horizontal gap-2 px-1">
-            {[
-              ['offers', 'Sell offers', results.offers.filter((o) => viewOf(o, now) === 'active').length],
-              ['requests', 'Buy requests', results.requests.filter((r) => viewOf(r, now) === 'active').length],
-              ['activity', 'Live activity'],
-            ].map(([key, label, count]) => (
-              <li key={key}>
-                <button role="tab" onClick={() => setTab(key)} className={tab === key ? 'menu-active' : ''}>
-                  {label}
-                  {count !== undefined && <span className="badge badge-sm">{count}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="navbar-end gap-3">
-          {user ? (
-            <>
-              <button onClick={() => openForm('offer')} className="btn btn-primary btn-sm">+ Sell</button>
-              <button onClick={() => openForm('request')} className="btn btn-outline btn-primary btn-sm">+ Request</button>
-              <div className="dropdown dropdown-end">
-                <div tabIndex={0} role="button" className={`btn btn-ghost btn-sm gap-2 ${user.name ? '' : 'font-mono'}`} title={user.identityKey}>
-                  <Avatar person={user} size="xs" />
-                  <span className="max-w-40 truncate">{displayName(user)}</span>
-                </div>
-                <ul tabIndex={0} className="menu dropdown-content z-20 mt-2 w-40 rounded-box bg-base-300 p-2 shadow">
-                  <li><a href={profileHref(user.identityKey)}>My profile</a></li>
-                  <li><button onClick={handleLogout}>Sign out</button></li>
-                </ul>
-              </div>
-            </>
-          ) : (
-            <button onClick={onSignIn} className="btn btn-primary btn-sm">Sign in</button>
-          )}
-        </div>
-      </header>
+      <Navbar
+        user={user}
+        onSignIn={onSignIn}
+        onLogout={onLogout}
+        nav={nav}
+        counts={{
+          offers: results.offers.filter((o) => viewOf(o, now) === 'active').length,
+          requests: results.requests.filter((r) => viewOf(r, now) === 'active').length,
+        }}
+      />
 
       <main className="mx-auto max-w-5xl px-6 py-10">
         {tab === 'activity' ? <Activity /> : <>
