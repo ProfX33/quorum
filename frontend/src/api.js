@@ -29,6 +29,7 @@ const query = (filters) => {
   return params.size ? `?${params}` : '';
 };
 export const searchMarket = (filters) => request(`/api/search${query(filters)}`);
+export const fetchActivity = () => request('/api/activity').then((d) => d.events);
 export const fetchOffer = (id) => request(`/api/offers/${id}`).then((d) => d.offer);
 export const createOffer = (offer) => request('/api/offers', offer);
 export const createRequest = (req) => request('/api/requests', req);

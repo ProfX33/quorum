@@ -427,7 +427,7 @@ export async function submitRefund(buyerId: string, bidId: string, beefHex: unkn
   }
   if (network.state === "rejected") return fail(400, `The network rejected the refund: ${network.reason}`);
   await sql`
-    UPDATE pledges SET status = 'refunded', refund_txid = ${refund.txid}
+    UPDATE pledges SET status = 'refunded', refund_txid = ${refund.txid}, refunded_at = now()
     WHERE bid_id = ${bidId} AND status = 'active' AND (txid || ':' || vout) = ANY(${refund.spends})`;
   return { txid: refund.txid, txUrl: txUrl(refund.txid) };
 }

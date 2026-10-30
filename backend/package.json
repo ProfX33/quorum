@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "agent": "bun agent/cli.ts",
+    "demo": "bun scripts/agent-demo.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

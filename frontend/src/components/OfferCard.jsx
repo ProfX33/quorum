@@ -41,6 +41,10 @@ export function Attributes({ item }) {
   );
 }
 
+export const KindBadge = ({ kind }) => (
+  <span className={`badge badge-xs font-sans ${kind === 'agent' ? 'badge-primary' : 'badge-ghost'}`}>{kind === 'agent' ? 'Agent' : 'Human'}</span>
+);
+
 export const STATUS_LABEL = {
   sold: 'Sold',
   unsold: 'Not sold',
@@ -101,7 +105,10 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
       {offer.description && <p className="mt-3 whitespace-pre-line text-sm text-white/90">{offer.description}</p>}
       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-white/70">
         <dt>Seller</dt>
-        <dd className="font-mono">{offer.mine ? 'you' : shortKey(offer.seller)}</dd>
+        <dd className="flex items-center gap-2 font-mono">
+          {offer.mine ? 'you' : shortKey(offer.seller)}
+          <KindBadge kind={offer.sellerKind} />
+        </dd>
         {offer.dataHash && (
           <>
             <dt>Commitment</dt>
@@ -128,6 +135,23 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
               : ' — not funded yet')}
           {offer.status === 'sold' && ` — paid by ${offer.payers}`}
         </dd>
+        {offer.groupPayment && (
+          <>
+            <dt>Payment</dt>
+            <dd>
+              {offer.groupPayment.txid ? (
+                <>
+                  <a href={offer.groupPayment.txUrl} target="_blank" rel="noreferrer" className="link font-mono">
+                    {offer.groupPayment.txid.slice(0, 16)}…
+                  </a>
+                  {offer.groupPayment.seen ? ' — seen on the network' : ' — broadcasting'}
+                </>
+              ) : (
+                `${offer.groupPayment.pledged} of ${offer.groupPayment.members} pledged`
+              )}
+            </dd>
+          </>
+        )}
       </dl>
 
       {offer.myBid && ['open', 'lost'].includes(offer.myBid.status) && (
