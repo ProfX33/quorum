@@ -94,43 +94,14 @@ class BuyerAgent:
     # ---------------------------------------------------------
     def fetch_market(self) -> dict:
         """Liest alle offenen und abgeschlossenen Angebote vom Backend."""
-        try:
-            resp = requests.get(
-                f"{BACKEND_URL}/api/search",
-                params={"status": "all"},
-                headers=self.get_headers(),
-                timeout=5
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            print(f"[Netzwerk-Warnung] Backend ({BACKEND_URL}) nicht erreichbar: {e}")
-            print("[Fallback] Nutze simuliertes Test-Offer nach echtem market.ts Schema...")
-            return {
-                "offers": [
-                    {
-                        "id": "550e8400-e29b-41d4-a716-446655440000",
-                        "kind": "data",
-                        "category": "environment",
-                        "region": "Munich",
-                        "name": "Feinstaub- & Temperatur-Zeitreihe München Zentrum",
-                        "description": "Verifizierte Umweltsensordaten (PM2.5, PM10, Temp) im 5-Minuten-Takt.",
-                        "price": 900,
-                        "deadline": "2026-12-31T23:59:59Z",
-                        "dataHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "status": "open",
-                        "seller": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-                        "createdAt": "2026-10-30T18:00:00Z",
-                        "settledAt": None,
-                        "bidCount": 2,
-                        "payers": 2,
-                        "share": 450,
-                        "mine": False,
-                        "myBid": None
-                    }
-                ],
-                "requests": []
-            }
+        resp = requests.get(
+            f"{BACKEND_URL}/api/search",
+            params={"status": "all"},
+            headers=self.get_headers(),
+            timeout=5
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     # ---------------------------------------------------------
     # HARTE REGELPRÜFUNG (Vorfilter vor dem LLM)
@@ -330,7 +301,12 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
         print(f" Starte Agent-Zyklus | Verfügbares Budget: {self.budget_sats} Sats")
         print(f"=======================================================")
 
-        market_data = self.fetch_market()
+        try:
+            market_data = self.fetch_market()
+        except Exception as e:
+            print(f"[Markt-Fehler] Backend ({BACKEND_URL}) konnte nicht abgefragt werden: {e}")
+            print("[Info] Zyklus wird ohne Marketplace-Entscheidungen beendet.")
+            return
         offers = market_data.get("offers", [])
 
         # 1. Prüfe zuerst, ob vergangene Gebote gewonnen haben (Settlement)
