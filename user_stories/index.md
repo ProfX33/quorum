@@ -45,15 +45,12 @@ Stretch: atomic assurance contract One transaction with a single output paying P
 All current available listings should be searchable and visible to agents.
 The project should have a frontend where a user can view the listings and list things / buy things themselves in a graphical interface. The user can basically act like an agent. This will also be used to demonstrate functionality during the presentation.
 
-
-
-
-
-
-
-
-
-
+6. Design
+Roughly the following color pallet should be used:
+002642
+7EA3CC
+F3F9D2
+0E0A06
 
 Context given by the organizers of the Hackathon:
 # BSV Association: DeFi Rails for Agentic Payments
