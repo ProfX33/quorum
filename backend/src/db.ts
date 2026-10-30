@@ -90,10 +90,14 @@ export async function migrate() {
       -- winners must pay before this, set at settlement
       ADD COLUMN IF NOT EXISTS payment_deadline timestamptz`;
 
-  // Bid lifecycle after settlement:
-  //   won → paid (txid submitted, broadcast) → delivered (key wrapped for the buyer) → received
-  //   won → defaulted (payment window missed; a late valid payment still counts)
+  // Bid lifecycle after settlement (see delivery.ts; the group pays in one transaction):
+  //   won → pledged (the buyer's pledges cover their share)
+  //   pledged → paid (every member pledged; the group payment is built and broadcast)
+  //   paid → delivered (key wrapped for the buyer) → received
+  //   won → defaulted (window missed); the others are regrouped with new shares, or the
+  //     offer fails and they become lost. Pledges not used in a payment can be refunded.
   //   delivered → paid again when the buyer cannot decrypt, until disputed after 3 attempts
+  // (The per-bid payment_* columns are from when each buyer paid separately.)
   await sql`
     ALTER TABLE buy_offers
       ADD COLUMN IF NOT EXISTS payment_prefix text,
@@ -114,10 +118,44 @@ export async function migrate() {
   await sql`
     ALTER TABLE buy_offers DROP CONSTRAINT IF EXISTS buy_offers_status_check,
       ADD CONSTRAINT buy_offers_status_check CHECK (status IN
-        ('open', 'won', 'lost', 'expired', 'paid', 'delivered', 'received', 'disputed', 'defaulted'))`;
-  // One transaction pays exactly one bid.
-  await sql`CREATE UNIQUE INDEX IF NOT EXISTS buy_offers_payment_txid
-            ON buy_offers (payment_txid) WHERE payment_txid IS NOT NULL`;
-  await sql`CREATE INDEX IF NOT EXISTS buy_offers_unconfirmed
-            ON buy_offers (paid_at) WHERE payment_txid IS NOT NULL AND payment_seen_at IS NULL`;
+        ('open', 'won', 'pledged', 'lost', 'expired', 'paid', 'delivered', 'received', 'disputed', 'defaulted'))`;
+  await sql`DROP INDEX IF EXISTS buy_offers_payment_txid`;
+  await sql`DROP INDEX IF EXISTS buy_offers_unconfirmed`;
+
+  // The group payment of a sold offer: one transaction paying the full price to the seller.
+  await sql`
+    ALTER TABLE sell_offers
+      ADD COLUMN IF NOT EXISTS payment_prefix text,
+      ADD COLUMN IF NOT EXISTS payment_suffix text,
+      ADD COLUMN IF NOT EXISTS payment_txid text UNIQUE,
+      ADD COLUMN IF NOT EXISTS payment_beef bytea,
+      ADD COLUMN IF NOT EXISTS paid_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_seen_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_checked_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_error text,
+      ADD COLUMN IF NOT EXISTS payment_rejections integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS internalized_at timestamptz`;
+  await sql`CREATE INDEX IF NOT EXISTS sell_offers_unconfirmed
+            ON sell_offers (paid_at) WHERE payment_txid IS NOT NULL AND payment_seen_at IS NULL`;
+
+  // A buyer's share, locked to their own key and signed for the group payment only.
+  //   active: usable (or refundable once the bid is out of the group)
+  //   used: input of the group payment   spent: spent elsewhere, worthless here
+  //   refunded: returned to the buyer's wallet
+  await sql`
+    CREATE TABLE IF NOT EXISTS pledges (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      bid_id uuid NOT NULL REFERENCES buy_offers(id) ON DELETE CASCADE,
+      txid text NOT NULL,
+      vout integer NOT NULL,
+      satoshis bigint NOT NULL,
+      key_id text NOT NULL,
+      beef bytea NOT NULL,
+      unlocking_script text NOT NULL,
+      status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'used', 'spent', 'refunded')),
+      refund_txid text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (txid, vout)
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS pledges_bid ON pledges (bid_id)`;
 }

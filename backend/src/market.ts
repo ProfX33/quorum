@@ -1,5 +1,5 @@
 import { sql } from "./db.ts";
-import { derivationNonce, txUrl } from "./payments.ts";
+import { PLEDGE_FEE, derivationNonce, txUrl } from "./payments.ts";
 import { findPaymentGroup } from "./settlement.ts";
 
 export const KINDS = ["data", "service", "product"] as const;
@@ -8,8 +8,11 @@ type Kind = (typeof KINDS)[number];
 const MAX_DEADLINE_MS = 365 * 24 * 60 * 60 * 1000;
 const PAYMENT_WINDOW_MINUTES = Number(process.env.PAYMENT_WINDOW_MINUTES ?? 60);
 
-// Bid states of the buyers who formed the payment group at settlement.
-const GROUP_STATES = ["won", "paid", "delivered", "received", "disputed", "defaulted"];
+/** End of a payment window starting now. */
+export const paymentWindowEnd = () => new Date(Date.now() + PAYMENT_WINDOW_MINUTES * 60_000);
+
+// Bid states of the buyers in (or dropped from) the payment group.
+const GROUP_STATES = ["won", "pledged", "paid", "delivered", "received", "disputed", "defaulted"];
 
 export const isUuid = (v: unknown): v is string =>
   typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -80,6 +83,16 @@ const toOffer = (row: any, userId: string | null) => {
     bidCount: maxima.length,
     payers: row.status === "open" ? (group?.length ?? 0) : Number(row.winner_count),
     share: group ? group[0]!.amount : null,
+    // The group payment: members still to pledge, and the transaction once it is built.
+    groupPayment: row.status === "sold"
+      ? {
+          members: Number(row.member_count),
+          pledged: Number(row.pledged_count),
+          txid: row.payment_txid,
+          txUrl: row.payment_txid ? txUrl(row.payment_txid) : null,
+          seen: row.payment_seen_at != null,
+        }
+      : null,
     mine: userId !== null && row.seller_id === userId,
     // Counts per bid state of the payment group, for the seller only.
     sales: userId !== null && row.seller_id === userId && row.status === "sold" ? row.sales ?? {} : null,
@@ -90,10 +103,13 @@ const toOffer = (row: any, userId: string | null) => {
           maxPrice: Number(row.my_max_price),
           status: row.my_status,
           amount: row.my_amount == null ? null : Number(row.my_amount),
-          txid: row.my_txid,
-          txUrl: row.my_txid ? txUrl(row.my_txid) : null,
-          paymentSeen: row.my_seen_at != null,
-          paymentError: row.my_payment_error,
+          // What the buyer's pledges count towards the share, and what they can take back.
+          pledged: Number(row.my_credited ?? 0),
+          refundable: Number(row.my_refundable ?? 0),
+          txid: GROUP_STATES.includes(row.my_status) ? row.payment_txid : null,
+          txUrl: GROUP_STATES.includes(row.my_status) && row.payment_txid ? txUrl(row.payment_txid) : null,
+          paymentSeen: GROUP_STATES.includes(row.my_status) && row.payment_seen_at != null,
+          paymentError: row.payment_error,
           disputeReason: row.my_dispute_reason,
         },
   };
@@ -108,10 +124,14 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
       (SELECT json_object_agg(g.status, g.n) FROM (
         SELECT b.status, count(*) AS n FROM buy_offers b
         WHERE b.sell_offer_id = s.id AND b.status = ANY(${GROUP_STATES}) GROUP BY b.status) g) AS sales,
+      (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status IN ('won', 'pledged')) AS member_count,
+      (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'pledged') AS pledged_count,
       f.name AS file_name, f.size AS file_size,
       my.id AS my_id, my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount,
-      my.payment_txid AS my_txid, my.payment_seen_at AS my_seen_at, my.payment_error AS my_payment_error,
-      my.dispute_reason AS my_dispute_reason
+      my.dispute_reason AS my_dispute_reason,
+      (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = my.id AND p.status IN ('active', 'used')) AS my_credited,
+      (SELECT sum(p.satoshis) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
+         AND my.status NOT IN ('won', 'pledged')) AS my_refundable
     FROM sell_offers s
     JOIN users u ON u.id = s.seller_id
     LEFT JOIN data_files f ON f.hash = s.data_hash
@@ -260,15 +280,14 @@ export async function settleDue() {
         Number(offer.price),
         bids.map((b: any) => ({ id: b.id, maxPrice: Number(b.max_price) })),
       );
-      // Each winner pays to their own BRC-29 key of the seller (see payments.ts).
       for (const { id: bidId, amount } of group ?? []) {
-        await tx`UPDATE buy_offers SET status = 'won', amount = ${amount},
-                   payment_prefix = ${derivationNonce()}, payment_suffix = ${derivationNonce()}
-                 WHERE id = ${bidId}`;
+        await tx`UPDATE buy_offers SET status = 'won', amount = ${amount} WHERE id = ${bidId}`;
       }
       await tx`UPDATE buy_offers SET status = 'lost' WHERE sell_offer_id = ${id} AND status = 'open'`;
+      // The group pays the whole price in one transaction to one BRC-29 key of the seller.
       await tx`UPDATE sell_offers SET status = ${group ? "sold" : "unsold"}, settled_at = now(),
-                 payment_deadline = ${group ? new Date(Date.now() + PAYMENT_WINDOW_MINUTES * 60_000) : null}
+                 payment_deadline = ${group ? paymentWindowEnd() : null},
+                 payment_prefix = ${group ? derivationNonce() : null}, payment_suffix = ${group ? derivationNonce() : null}
                WHERE id = ${id}`;
     });
   }

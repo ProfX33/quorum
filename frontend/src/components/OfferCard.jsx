@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid } from '../api';
+import { canRefund } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
 
 export function useNow() {
@@ -44,6 +45,7 @@ export const STATUS_LABEL = {
   sold: 'Sold',
   unsold: 'Not sold',
   won: 'You won',
+  pledged: 'Pledged',
   lost: 'Not in payment group',
   expired: 'Expired',
   paid: 'Paid',
@@ -136,7 +138,8 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
           </span>
         </div>
       )}
-      {offer.myBid && !['open', 'lost'].includes(offer.myBid.status) && (
+      {/* A lost bid can still hold pledges from before the group failed. */}
+      {offer.myBid && (!['open', 'lost'].includes(offer.myBid.status) || (offer.myBid.status === 'lost' && canRefund(offer.myBid))) && (
         <BuyerDeal offer={offer} now={now} onChange={onChange} />
       )}
       {offer.mine && offer.sales && <SellerDeal offer={offer} />}
