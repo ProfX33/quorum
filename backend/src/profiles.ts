@@ -8,7 +8,7 @@ export const MAX_NAME_LENGTH = 50;
 export const MAX_AVATAR_BYTES = 512 * 1024;
 
 // Raster images only (no SVG, which could carry scripts), recognised by their magic bytes.
-const AVATAR_TYPES: Record<string, (b: Uint8Array) => boolean> = {
+export const IMAGE_TYPES: Record<string, (b: Uint8Array) => boolean> = {
   "image/png": (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
   "image/jpeg": (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
   "image/gif": (b) => b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38,
@@ -17,7 +17,7 @@ const AVATAR_TYPES: Record<string, (b: Uint8Array) => boolean> = {
 };
 
 // Bid states in which the buyer's share has been paid to the seller.
-const PAID_STATES = ["paid", "delivered", "received", "disputed"];
+export const PAID_STATES = ["paid", "delivered", "received", "disputed"];
 // Bid states in which the bid is (or was) in the payment group, so its amount is set.
 const GROUP_STATES = ["won", "pledged", "defaulted", ...PAID_STATES];
 
@@ -45,8 +45,8 @@ export async function updateProfile(userId: string, body: Record<string, unknown
 
 export async function setAvatar(userId: string, bytes: Uint8Array, contentType: string | null) {
   const type = contentType?.split(";")[0]!.trim().toLowerCase() ?? "";
-  const matches = AVATAR_TYPES[type];
-  if (!matches) return fail(415, `Picture must be one of ${Object.keys(AVATAR_TYPES).join(", ")}`);
+  const matches = IMAGE_TYPES[type];
+  if (!matches) return fail(415, `Picture must be one of ${Object.keys(IMAGE_TYPES).join(", ")}`);
   if (bytes.length === 0) return fail(400, "Empty picture");
   if (bytes.length > MAX_AVATAR_BYTES) return fail(413, "Picture too large");
   if (!matches(bytes)) return fail(415, `This is not a ${type} file`);

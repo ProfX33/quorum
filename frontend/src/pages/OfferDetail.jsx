@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchOffer } from '../api';
+import Chat, { canChat } from '../components/Chat';
 import Navbar from '../components/Navbar';
 import { OfferCard, useNow } from '../components/OfferCard';
 
@@ -35,6 +36,7 @@ export default function OfferDetail({ id, user, onSignIn, onLogout, nav }) {
       <div className="mt-8">
         {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error === 'Not found' ? 'This offer does not exist.' : error}</span></div>}
         {offer && <OfferCard key={offer.id} offer={offer} user={user} now={now} onChange={load} onSignIn={onSignIn} />}
+        {offer && user && canChat(offer) && <Chat offer={offer} />}
         {!offer && !error && <span className="loading loading-spinner" />}
       </div>
     </div>

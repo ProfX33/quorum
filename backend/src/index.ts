@@ -36,6 +36,7 @@ import {
   withdrawOffer,
   withdrawRequest,
 } from "./market.ts";
+import { MAX_IMAGE_BYTES, listMessages, messageImage, postMessage } from "./messages.ts";
 import {
   MAX_AVATAR_BYTES,
   avatar,
@@ -371,6 +372,47 @@ const server = Bun.serve({
         const { ok, reason } = await readBody(req);
         return reply(await confirmReceipt(user.id, req.params.id, ok, reason));
       },
+    },
+
+    // ---------- Chat of a sold offer between its seller and paying buyers (see messages.ts) ----------
+
+    // GET ?after=<ISO time> returns only newer messages; POST is multipart: text and/or image.
+    "/api/offers/:id/messages": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        return reply(await listMessages(user.id, req.params.id, new URL(req.url).searchParams.get("after")));
+      },
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        if (Number(req.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES + 64 * 1024) {
+          return json({ error: "Image too large" }, { status: 413 });
+        }
+        const form = await req.formData().catch(() => null);
+        if (!form) return json({ error: "Expected multipart form data" }, { status: 400 });
+        const result = await postMessage(user.id, req.params.id, form);
+        return "error" in result ? reply(result) : json(result, { status: 201 });
+      },
+    },
+
+    "/api/messages/:id/image": async (req) => {
+      const user = await userFromRequest(req);
+      if (!user) return unauthorized();
+      const image = isUuid(req.params.id) ? await messageImage(user.id, req.params.id) : null;
+      if (!image) return notFound();
+      return new Response(image.bytes, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": image.type,
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "default-src 'none'",
+          // Messages never change, but only the chat's members may see them.
+          "Cache-Control": "private, max-age=31536000, immutable",
+        },
+      });
     },
 
     "/api/requests": {

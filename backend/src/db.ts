@@ -170,6 +170,21 @@ export async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS pledges_bid ON pledges (bid_id)`;
   await sql`ALTER TABLE pledges ADD COLUMN IF NOT EXISTS refunded_at timestamptz`;
 
+  // Chat of a sold offer between its seller and the buyers who paid (see messages.ts).
+  // A message has text, an image (stored here, served by /api/messages/:id/image), or both.
+  await sql`
+    CREATE TABLE IF NOT EXISTS messages (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      offer_id uuid NOT NULL REFERENCES sell_offers(id) ON DELETE CASCADE,
+      sender_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body text NOT NULL DEFAULT '',
+      image bytea,
+      image_type text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CHECK (body <> '' OR image IS NOT NULL)
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS messages_offer ON messages (offer_id, created_at)`;
+
   // Pledges are signed while bidding, so an open offer needs its group payment key already.
   await sql`
     UPDATE sell_offers SET

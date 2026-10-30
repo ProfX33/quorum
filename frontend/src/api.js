@@ -63,3 +63,16 @@ export async function loginWithWallet() {
   const hex = signature.map((b) => b.toString(16).padStart(2, '0')).join('');
   return request('/api/auth/login', { identityKey, nonce, signature: hex, kind: 'human' });
 }
+
+// Chat of a sold offer, for its seller and paying buyers. A message has text, an image, or both.
+export const fetchMessages = (offerId, after) =>
+  request(`/api/offers/${offerId}/messages${after ? `?after=${encodeURIComponent(after)}` : ''}`).then((d) => d.messages);
+export async function sendMessage(offerId, text, image) {
+  const form = new FormData();
+  if (text) form.append('text', text);
+  if (image) form.append('image', image);
+  const res = await fetch(`/api/offers/${offerId}/messages`, { method: 'POST', credentials: 'include', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Sending failed (${res.status})`);
+  return data.message;
+}
