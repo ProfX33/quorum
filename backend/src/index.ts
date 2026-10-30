@@ -33,6 +33,7 @@ import {
   placeBid,
   settleDue,
   withdrawBid,
+  withdrawOffer,
   withdrawRequest,
 } from "./market.ts";
 import {
@@ -230,11 +231,20 @@ const server = Bun.serve({
       },
     },
 
-    "/api/offers/:id": async (req) => {
-      if (!isUuid(req.params.id)) return json({ error: "Not found" }, { status: 404 });
-      const user = await userFromRequest(req);
-      const [offer] = await listOffers({}, user?.id ?? null, req.params.id);
-      return offer ? json({ offer }) : json({ error: "Not found" }, { status: 404 });
+    "/api/offers/:id": {
+      GET: async (req) => {
+        if (!isUuid(req.params.id)) return json({ error: "Not found" }, { status: 404 });
+        const user = await userFromRequest(req);
+        const [offer] = await listOffers({}, user?.id ?? null, req.params.id);
+        return offer ? json({ offer }) : json({ error: "Not found" }, { status: 404 });
+      },
+      // The seller withdraws their offer while it is still open.
+      DELETE: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        const ok = isUuid(req.params.id) && (await withdrawOffer(user.id, req.params.id));
+        return ok ? json({ ok }) : json({ error: "No open offer of yours to withdraw" }, { status: 404 });
+      },
     },
 
     // The offers the caller has bid on, whatever their state: how an agent follows its bids.

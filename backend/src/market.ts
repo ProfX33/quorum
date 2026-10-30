@@ -232,6 +232,23 @@ export async function withdrawBid(buyerId: string, offerId: string) {
   return rows.length > 0;
 }
 
+/**
+ * The seller takes back an offer before its deadline. Open offers hold no pledges yet, so the
+ * bids on it are simply dropped; a request it answered is handed back to its buyer, open again.
+ */
+export async function withdrawOffer(sellerId: string, offerId: string) {
+  return sql.begin(async (tx) => {
+    const [offer] = await tx`
+      SELECT id FROM sell_offers
+      WHERE id = ${offerId} AND seller_id = ${sellerId} AND status = 'open' AND deadline > now()
+      FOR UPDATE`;
+    if (!offer) return false;
+    await tx`UPDATE buy_offers SET sell_offer_id = NULL WHERE sell_offer_id = ${offerId} AND name IS NOT NULL`;
+    await tx`DELETE FROM sell_offers WHERE id = ${offerId}`;
+    return true;
+  });
+}
+
 // ---------- Requests (buy offers without a sell offer) ----------
 
 const toRequest = (row: any, userId: string | null) => ({

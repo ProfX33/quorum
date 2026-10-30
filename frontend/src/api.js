@@ -34,7 +34,8 @@ export const fetchOffer = (id) => request(`/api/offers/${id}`).then((d) => d.off
 export const createOffer = (offer) => request('/api/offers', offer);
 export const createRequest = (req) => request('/api/requests', req);
 export const placeBid = (offerId, maxPrice) => request(`/api/offers/${offerId}/bid`, { maxPrice });
-export const withdrawBid = (offerId) => request(`/api/offers/${offerId}/bid`, undefined, 'DELETE');
+export const withdrawOffer = (offerId) => request(`/api/offers/${offerId}`, undefined, 'DELETE');
+export const withdrawBid =(offerId) => request(`/api/offers/${offerId}/bid`, undefined, 'DELETE');
 export const withdrawRequest = (requestId) => request(`/api/requests/${requestId}`, undefined, 'DELETE');
 
 // Profiles, addressed by identity key. Updates return the signed-in user.

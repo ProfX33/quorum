@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { placeBid, withdrawBid } from '../api';
+import { placeBid, withdrawBid, withdrawOffer } from '../api';
 import { canRefund } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
-import { UserLink } from './UserLink';
+import { UserLink, profileHref } from './UserLink';
 
 export { shortKey } from './UserLink';
 
@@ -122,7 +122,9 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-white/70">
         <dt>Seller</dt>
         <dd className="flex items-center gap-2 font-mono">
-          {offer.mine ? 'you' : shortKey(offer.seller)}
+          <a href={profileHref(offer.seller)} title={offer.seller} className="link link-hover">
+            {offer.mine ? 'you' : shortKey(offer.seller)}
+          </a>
           <KindBadge kind={offer.sellerKind} />
         </dd>
         {offer.dataHash && (
@@ -201,6 +203,19 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
       {offer.mine && offer.sales && <SellerDeal offer={offer} />}
 
       {offer.mine && open && <div role="alert" className="alert alert-soft alert-info text-sm"><span>This is your offer — you can't bid on it.</span></div>}
+      {offer.mine && open && (
+        <button
+          onClick={() => {
+            const bids = offer.bidCount > 0 ? ` Its ${offer.bidCount} buying offer${offer.bidCount > 1 ? 's' : ''} will be dropped.` : '';
+            if (!window.confirm(`Withdraw "${offer.name}"?${bids}`)) return;
+            // On its own page the offer is gone afterwards: back to the market.
+            run(() => withdrawOffer(offer.id).then(() => { if (!linked) window.location.hash = '#/'; }));
+          }}
+          className="btn btn-ghost btn-sm self-start"
+        >
+          Withdraw offer
+        </button>
+      )}
       {!user && !offer.mine && open && onSignIn && (
         <button
           onClick={onSignIn}
