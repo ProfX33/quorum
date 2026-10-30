@@ -6,10 +6,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: true, // listen on all interfaces so the app is reachable on the local network
-    allowedHosts: ['.local'], // accept the Mac's Bonjour name (e.g. MarcBook-Air-96.local) as well as the LAN IP
     port: 3000,
-    // a leading dot allows the domain and all its subdomains, so new quick-tunnel URLs keep working
-    allowedHosts: ['.trycloudflare.com'],
+    // a leading dot allows the domain and all its subdomains
+    // .local: the Mac's Bonjour name (e.g. MarcBook-Air-96.local); .trycloudflare.com: new quick-tunnel URLs
+    allowedHosts: ['.local', '.trycloudflare.com'],
     proxy: {
       '/api': 'http://localhost:4000',
     },
