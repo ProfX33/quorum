@@ -1,59 +1,368 @@
+import os
 import json
 import time
+import subprocess
+from datetime import datetime, timezone
+from typing import Literal, Optional
+import requests
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
 
-# Schalter: True für sofortiges lokales Testen, False für echte Gemini-API
-USE_MOCK = True
+# 1. Umgebungsvariablen laden
+load_dotenv()
 
-class MockGeminiClient:
-    """Simuliert die Gemini-Antwort lokal ohne Netzwerkanfrage."""
-    def generate_decision(self, market_listing: dict, agent_budget: int) -> dict:
-        print("[MOCK] Analysiere Marktdaten...")
-        time.sleep(0.5)  # Kurze Verzögerung zur Simulation
-        
-        # Simulierte Agenten-Entscheidung als valides JSON
-        if market_listing["price_sats"] <= agent_budget:
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:4000")
+BUDGET_SATS = int(os.getenv("AGENT_BUDGET_SATS", "10000"))
+ESTIMATED_FEE_SATS = int(os.getenv("ESTIMATED_FEE_SATS", "150"))
+USE_MOCK_LLM = os.getenv("USE_MOCK_LLM", "False").lower() == "true"
+
+# Mission & Suchprofil des Agenten
+AGENT_MISSION = {
+    "target_region": "Munich",
+    "target_categories": ["environment", "weather", "mobility", "sensor"],
+    "target_kind": "data",
+    "max_willingness_to_pay_sats": 600,  # Absolutes Preislimit pro Datensatz inkl. Fees
+    "min_economical_share_sats": 100     # Unter 100 Sats lohnen sich ~150 Sats Fees oft nicht, außer Daten sind kritisch
+}
+
+# 2. Verbindliches Output-Schema für Gemini (Pydantic)
+class AgentDecision(BaseModel):
+    decision: Literal["BID", "SKIP", "WITHDRAW", "CREATE_REQUEST"] = Field(
+        description="Die gewählte Aktion für das Marktplatz-Backend."
+    )
+    offer_id: Optional[str] = Field(
+        default=None,
+        description="Die UUID des Angebots bei BID, SKIP oder WITHDRAW."
+    )
+    max_price_sats: Optional[int] = Field(
+        default=None,
+        description="Maximalgebot in Satoshis (ganzzahlig) für BID oder CREATE_REQUEST."
+    )
+    reasoning: str = Field(
+        description="Kurze, präzise Begründung für die Entscheidung unter Einbezug von Share, Gruppe und Gebühren."
+    )
+
+
+class BuyerAgent:
+    def __init__(self):
+        self.budget_sats = BUDGET_SATS
+        self.token: Optional[str] = None
+        self.paid_offers: set[str] = set()
+        self.client = genai.Client() if not USE_MOCK_LLM else None
+
+    # ---------------------------------------------------------
+    # AUTHENTIFIZIERUNG (via TypeScript Subprocess)
+    # ---------------------------------------------------------
+    def authenticate(self) -> bool:
+        """Ruft backend/scripts/agent-login.ts auf, um einen gültigen Bearer-Token zu holen."""
+        print("[Auth] Hole Agent-Token über BSV Challenge-Response...")
+        try:
+            # Führt das bestehende TS-Skript im backend-Ordner aus
+            result = subprocess.run(
+                ["bun", "run", "scripts/agent-login.ts"],
+                cwd="../backend",
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Nimmt die letzte Zeile oder parst JSON, falls das Skript JSON ausgibt
+                out = result.stdout.strip().splitlines()[-1]
+                try:
+                    data = json.loads(out)
+                    self.token = data.get("token", out)
+                except json.JSONDecodeError:
+                    self.token = out
+                print("[Auth] Erfolgreich eingeloggt!")
+                return True
+            else:
+                print(f"[Auth-Warnung] Login-Skript lieferte keinen Token: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"[Auth-Fallback] Konnte bun-Skript nicht starten ({e}). Arbeite im Read-Only/Mock-Modus.")
+            return False
+
+    def get_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
+    # ---------------------------------------------------------
+    # WAHRNEHMUNG (Sense: GET /api/search)
+    # ---------------------------------------------------------
+    def fetch_market(self) -> dict:
+        """Liest alle offenen und abgeschlossenen Angebote vom Backend."""
+        try:
+            resp = requests.get(
+                f"{BACKEND_URL}/api/search",
+                params={"status": "all"},
+                headers=self.get_headers(),
+                timeout=5
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            print(f"[Netzwerk-Warnung] Backend ({BACKEND_URL}) nicht erreichbar: {e}")
+            print("[Fallback] Nutze simuliertes Test-Offer nach echtem market.ts Schema...")
             return {
-                "decision": "BUY",
-                "amount_sats": market_listing["price_sats"],
-                "reasoning": f"Preis von {market_listing['price_sats']} Sats liegt im Budget ({agent_budget} Sats)."
+                "offers": [
+                    {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "kind": "data",
+                        "category": "environment",
+                        "region": "Munich",
+                        "name": "Feinstaub- & Temperatur-Zeitreihe München Zentrum",
+                        "description": "Verifizierte Umweltsensordaten (PM2.5, PM10, Temp) im 5-Minuten-Takt.",
+                        "price": 900,
+                        "deadline": "2026-12-31T23:59:59Z",
+                        "dataHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        "status": "open",
+                        "seller": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                        "createdAt": "2026-10-30T18:00:00Z",
+                        "settledAt": None,
+                        "bidCount": 2,
+                        "payers": 2,
+                        "share": 450,
+                        "mine": False,
+                        "myBid": None
+                    }
+                ],
+                "requests": []
             }
-        return {
-            "decision": "SKIP",
-            "amount_sats": 0,
-            "reasoning": "Angebot übersteigt das verfügbare Budget."
-        }
 
-def run_agent_cycle():
-    # 1. State / Budget des Agenten
-    budget_sats = 1000
-    print(f"--- Agent gestartet | Startguthaben: {budget_sats} Sats ---")
+    # ---------------------------------------------------------
+    # HARTE REGELPRÜFUNG (Vorfilter vor dem LLM)
+    # ---------------------------------------------------------
+    def is_candidate_valid(self, offer: dict) -> tuple[bool, str]:
+        """Prüft harte technische Ausschlusskriterien laut Schema."""
+        if offer.get("status") != "open":
+            return False, f"Status ist '{offer.get('status')}' (nicht open)."
+        if offer.get("mine") is True:
+            return False, "Eigenes Angebot (mine == True)."
+        if offer.get("kind") == "data" and not offer.get("dataHash"):
+            return False, "Daten-Angebot enthält keinen verifizierbaren dataHash."
 
-    # 2. Wahrnehmung: Simulierte Marktdaten
-    mock_listing = {
-        "dataset_id": "iot_sensor_munich_01",
-        "description": "Temperaturdaten Innenstadt München",
-        "price_sats": 450
-    }
-    print(f"Neues Listing gefunden: {mock_listing['description']} ({mock_listing['price_sats']} Sats)")
+        # Deadline-Check
+        deadline_str = offer.get("deadline")
+        if deadline_str:
+            try:
+                dl = datetime.fromisoformat(deadline_str.replace("Z", "+00:00"))
+                if dl <= datetime.now(timezone.utc):
+                    return False, "Deadline liegt in der Vergangenheit."
+            except ValueError:
+                pass
 
-    # 3. Brain: Entscheidung treffen
-    if USE_MOCK:
-        brain = MockGeminiClient()
-        result = brain.generate_decision(mock_listing, budget_sats)
-    else:
-        # Hier greift später der echte API-Call
-        pass
+        # Falls wir bereits ein ausreichend hohes Gebot abgegeben haben, nicht erneut bieten
+        my_bid = offer.get("myBid")
+        if my_bid and my_bid.get("status") == "open":
+            current_share = offer.get("share", offer.get("price", 0))
+            if my_bid.get("maxPrice", 0) >= current_share:
+                return False, f"Bereits aktives Gebot ({my_bid.get('maxPrice')} Sats) deckt aktuellen Share ({current_share} Sats)."
 
-    print("\nEntscheidung des Agenten:")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+        return True, "Valider Kandidat"
 
-    # 4. Aktion: Transaktion simulieren & State anpassen
-    if result["decision"] == "BUY":
-        budget_sats -= result["amount_sats"]
-        print(f"\n[Aktion] Simuliere BSV-Kauf-Transaktion über {result['amount_sats']} Sats...")
-        print(f"[State Update] Neues Restbudget: {budget_sats} Sats")
-    else:
-        print("\n[Aktion] Kein Kauf getätigt.")
+    # ---------------------------------------------------------
+    # GEHIRN (Think: Gemini Structured Decision + Fallback)
+    # ---------------------------------------------------------
+    def evaluate_offer_with_gemini(self, offer: dict) -> AgentDecision:
+        """Übergibt das Angebot und die Abrechnungsregeln an Gemini und erzwingt das JSON-Schema."""
+        system_instruction = f"""
+Du bist ein autonomer Buyer-Agent auf einem dezentralen BSV-Gruppenkauf-Marktplatz.
+Deine Mission: Kaufe kontinuierlich Daten gemäß diesem Profil: {json.dumps(AGENT_MISSION, ensure_ascii=False)}
+
+WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
+1. Verkäufer listen Angebote zu einem Gesamt-Festpreis (`price` in Satoshis).
+2. Käufer geben nur ein geheimes Maximalgebot (`max_price_sats`) ab.
+3. Bei der Abrechnung wird `price` gleichmäßig auf alle Bieter (`payers`) aufgeteilt (Abrunden + Rest auf die höchsten Gebote). `share` zeigt den aktuellen Preis pro Kopf.
+4. Wer ein `max_price_sats` unter dem finalen Anteil hat, geht leer aus. Du zahlst am Ende nie mehr als deinen Anteil (`share`) und nie mehr als dein `max_price_sats`.
+5. TRANSAKTIONSGEBÜHREN BEACHTEN: Jede echte BSV-Zahlung kostet ca. {ESTIMATED_FEE_SATS} Sats an Miner-/Wallet-Gebühren!
+   - Dein verfügbares Gesamtbudget beträgt aktuell: {self.budget_sats} Sats.
+   - Dein Gebot (`max_price_sats`) PLUS {ESTIMATED_FEE_SATS} Sats Gebühr darf dein Budget und deine maximale Zahlungsbereitschaft ({AGENT_MISSION['max_willingness_to_pay_sats']} Sats) NICHT überschreiten.
+   - Wenn ein Angebot bereits ein unsinniges eigenes Gebot hat (`myBid` vorhanden, aber Preis/Nutzen unrentabel), wähle `WITHDRAW`.
+"""
+        user_prompt = f"Bewerte folgendes Marktplatz-Angebot und triff eine Entscheidung:\n{json.dumps(offer, indent=2, ensure_ascii=False)}"
+
+        if not USE_MOCK_LLM and self.client:
+            candidate_models = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash"]
+            for model_name in candidate_models:
+                try:
+                    print(f"[Brain] Frage {model_name} nach Bewertung für Offer '{offer['name']}'...")
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=user_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json",
+                            response_schema=AgentDecision,
+                            temperature=0.1,
+                        ),
+                    )
+                    return AgentDecision.model_validate_json(response.text)
+                except Exception as e:
+                    print(f"[LLM-Warnung] {model_name} nicht verfügbar ({e}). Wechsle Fallback...")
+
+        # Deterministischer Fallback (falls API 503 hat oder USE_MOCK_LLM=True)
+        print("[Brain-Fallback] Berechne Entscheidung über lokales Regelwerk...")
+        max_net_bid = AGENT_MISSION["max_willingness_to_pay_sats"] - ESTIMATED_FEE_SATS
+        projected_share = offer["price"] // (offer.get("payers", 0) + 1)
+
+        if (
+            offer.get("region", "").lower() == AGENT_MISSION["target_region"].lower()
+            and projected_share <= max_net_bid
+            and ( max_net_bid + ESTIMATED_FEE_SATS ) <= self.budget_sats
+        ):
+            return AgentDecision(
+                decision="BID",
+                offer_id=offer["id"],
+                max_price_sats=max_net_bid,
+                reasoning=(
+                    f"Angebot passt auf Zielregion {offer.get('region')}. "
+                    f"Erwarteter Gruppen-Share (~{projected_share} Sats) liegt unter unserem Netto-Limit "
+                    f"von {max_net_bid} Sats (inkl. {ESTIMATED_FEE_SATS} Sats Gebührenpuffer)."
+                )
+            )
+        return AgentDecision(
+            decision="SKIP",
+            offer_id=offer["id"],
+            max_price_sats=0,
+            reasoning="Angebot passt nicht ins Suchprofil oder übersteigt unser Budget inkl. Transaktionsgebühren."
+        )
+
+    # ---------------------------------------------------------
+    # AKTION (Act: REST-Calls ans Backend)
+    # ---------------------------------------------------------
+    def execute_decision(self, decision: AgentDecision):
+        """Setzt die LLM-Entscheidung in die entsprechenden REST-Calls um."""
+        print("\n[Entscheidung]:")
+        print(json.dumps(decision.model_dump(), indent=2, ensure_ascii=False))
+
+        if decision.decision == "SKIP":
+            print("[Act] Überspringe Angebot.")
+            return
+
+        if decision.decision == "BID" and decision.offer_id and decision.max_price_sats:
+            url = f"{BACKEND_URL}/api/offers/{decision.offer_id}/bid"
+            payload = {"maxPrice": decision.max_price_sats}
+            try:
+                resp = requests.post(url, json=payload, headers=self.get_headers(), timeout=5)
+                if resp.status_code in (200, 201):
+                    print(f"[Act-Erfolg] Gebot über max. {decision.max_price_sats} Sats für {decision.offer_id} platziert!")
+                else:
+                    print(f"[Act-Info] Backend-Antwort ({resp.status_code}): {resp.text}")
+            except Exception as e:
+                print(f"[Act-Simulation] Backend offline – hätte gesendet: POST {url} mit {payload} ({e})")
+
+        elif decision.decision == "WITHDRAW" and decision.offer_id:
+            url = f"{BACKEND_URL}/api/offers/{decision.offer_id}/bid"
+            try:
+                resp = requests.delete(url, headers=self.get_headers(), timeout=5)
+                print(f"[Act] Gebot zurückgezogen (Status {resp.status_code}).")
+            except Exception as e:
+                print(f"[Act-Simulation] Hätte gesendet: DELETE {url} ({e})")
+
+        elif decision.decision == "CREATE_REQUEST" and decision.max_price_sats:
+            url = f"{BACKEND_URL}/api/requests"
+            payload = {
+                "kind": "data",
+                "category": "environment",
+                "region": AGENT_MISSION["target_region"],
+                "name": "Suche Umweltdaten München",
+                "description": "Automatisiertes Kaufgesuch des Buyer-Agenten für Münchner Sensordaten.",
+                "maxPrice": decision.max_price_sats,
+                "deadline": "2026-12-31T23:59:59Z"
+            }
+            try:
+                resp = requests.post(url, json=payload, headers=self.get_headers(), timeout=5)
+                print(f"[Act] Suchauftrag angelegt (Status {resp.status_code}).")
+            except Exception as e:
+                print(f"[Act-Simulation] Hätte gesendet: POST {url} mit {payload} ({e})")
+
+    # ---------------------------------------------------------
+    # SETTLEMENT & BLOCKCHAIN-ZAHLUNG (myBid.status == "won")
+    # ---------------------------------------------------------
+    def check_settlements_and_pay(self, offers: list[dict]):
+        """Prüft abgerechnete Angebote. Wenn myBid.status == 'won', wird der finale Share bezahlt."""
+        for offer in offers:
+            offer_id = offer.get("id")
+            my_bid = offer.get("myBid")
+            if not my_bid or offer_id in self.paid_offers:
+                continue
+
+            status = my_bid.get("status")
+            final_amount = my_bid.get("amount")
+
+            if status == "won" and final_amount is not None:
+                total_cost = final_amount + ESTIMATED_FEE_SATS
+                print(f"\n[Settlement GEWONNEN!] Offer '{offer.get('name')}' wurde abgerechnet!")
+                print(f"Finaler Gruppen-Anteil: {final_amount} Sats (+ ~{ESTIMATED_FEE_SATS} Sats Netzwerkgebühr)")
+
+                # Blockchain-Zahlung anstoßen
+                self.trigger_bsv_payment(
+                    seller_pubkey=offer.get("seller", ""),
+                    amount_sats=final_amount,
+                    offer_id=offer_id
+                )
+                self.budget_sats -= total_cost
+                self.paid_offers.add(offer_id)
+                print(f"[State Update] Neues Restbudget nach Abzug von Share & Fees: {self.budget_sats} Sats")
+
+    def trigger_bsv_payment(self, seller_pubkey: str, amount_sats: int, offer_id: str):
+        """Ruft das lokale TypeScript-BSV-Skript auf, ohne dass Private Keys jemals in Python/LLM-Prompts landen."""
+        print(f"[BSV-Chain] Führe On-Chain-Zahlung über {amount_sats} Sats an {seller_pubkey[:16]}... aus...")
+        try:
+            result = subprocess.run(
+                ["bun", "run", "scripts/agent-pay.ts", seller_pubkey, str(amount_sats), offer_id],
+                cwd="../backend",
+                capture_output=True,
+                text=True,
+                timeout=20
+            )
+            if result.returncode == 0:
+                print(f"[BSV-Chain Erfolg]: {result.stdout.strip()}")
+            else:
+                print(f"[BSV-Chain Info]: Zahlungsskript noch im Aufbau ({result.stderr.strip()})")
+        except Exception as e:
+            print(f"[BSV-Chain Simulation] Subprozess übersprungen ({e}). Zahlung lokal vermerkt.")
+
+    # ---------------------------------------------------------
+    # HAUPTSCHLEIFE (Sense -> Think -> Act)
+    # ---------------------------------------------------------
+    def run_once(self):
+        print(f"\n=======================================================")
+        print(f" Starte Agent-Zyklus | Verfügbares Budget: {self.budget_sats} Sats")
+        print(f"=======================================================")
+
+        market_data = self.fetch_market()
+        offers = market_data.get("offers", [])
+
+        # 1. Prüfe zuerst, ob vergangene Gebote gewonnen haben (Settlement)
+        self.check_settlements_and_pay(offers)
+
+        # 2. Suche nach neuen, validen Kaufkandidaten
+        valid_candidates = []
+        for offer in offers:
+            is_valid, reason = self.is_candidate_valid(offer)
+            if is_valid:
+                valid_candidates.append(offer)
+            else:
+                print(f"[Filter] Überspringe '{offer.get('name')}': {reason}")
+
+        # 3. Bewerte valide Angebote mit Gemini
+        if not valid_candidates:
+            print("[Info] Keine neuen offenen Angebote gefunden.")
+            return
+
+        for candidate in valid_candidates:
+            decision = self.evaluate_offer_with_gemini(candidate)
+            self.execute_decision(decision)
+
 
 if __name__ == "__main__":
-    run_agent_cycle()
+    agent = BuyerAgent()
+    agent.authenticate()
+    # Für den ersten Test führen wir einen einzelnen Durchlauf aus.
+    # Für Dauerbetrieb im Pitch einfach in eine while True Schleife mit time.sleep(5) setzen!
+    agent.run_once()
