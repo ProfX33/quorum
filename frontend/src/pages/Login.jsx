@@ -19,7 +19,7 @@ export default function Login({ onLogin, onCancel }) {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
+    <main className="flex flex-1 items-center justify-center px-6 py-16">
       <div className="card card-border bg-base-200 card-body w-full max-w-xs text-center">
         <h1 className="card-title justify-center text-xl tracking-tight">Sign in</h1>
         <p className="mt-2 text-sm text-white/70">
@@ -35,7 +35,7 @@ export default function Login({ onLogin, onCancel }) {
         </button>
         {error && <div role="alert" className="alert alert-error alert-soft mt-4 text-sm"><span>{error}</span></div>}
         <button onClick={onCancel} className="btn btn-ghost btn-sm mt-2">
-          Back to marketplace
+          Back
         </button>
       </div>
     </main>

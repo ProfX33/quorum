@@ -67,7 +67,7 @@ export default function Market({ user, onSignIn, onLogout, nav }) {
   const items = visible.filter((i) => viewOf(i, now) === currentView).sort(SORTS[sort][1]);
 
   return (
-    <div className="min-h-screen">
+    <div>
       <Navbar
         user={user}
         onSignIn={onSignIn}

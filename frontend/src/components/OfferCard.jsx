@@ -209,7 +209,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
             const bids = offer.bidCount > 0 ? ` Its ${offer.bidCount} buying offer${offer.bidCount > 1 ? 's' : ''} will be dropped.` : '';
             if (!window.confirm(`Withdraw "${offer.name}"?${bids}`)) return;
             // On its own page the offer is gone afterwards: back to the market.
-            run(() => withdrawOffer(offer.id).then(() => { if (!linked) window.location.hash = '#/'; }));
+            run(() => withdrawOffer(offer.id).then(() => { if (!linked) window.location.hash = '#/market'; }));
           }}
           className="btn btn-ghost btn-sm self-start"
         >
