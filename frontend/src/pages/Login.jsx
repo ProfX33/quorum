@@ -20,20 +20,21 @@ export default function Login({ onLogin, onCancel }) {
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6">
-      <div className="w-full max-w-xs text-center">
-        <h1 className="text-xl font-medium tracking-tight">Sign in</h1>
-        <p className="mt-2 text-sm text-neutral-500">
+      <div className="card card-border bg-base-200 card-body w-full max-w-xs text-center">
+        <h1 className="card-title justify-center text-xl tracking-tight">Sign in</h1>
+        <p className="mt-2 text-sm text-white/70">
           Use your BSV wallet. An account is created automatically.
         </p>
         <button
           onClick={handleLogin}
           disabled={busy}
-          className="mt-8 w-full rounded-md bg-black py-2.5 text-sm text-white transition hover:bg-neutral-800 disabled:opacity-50"
+          className="btn btn-block btn-primary mt-6"
         >
+          {busy && <span className="loading loading-spinner loading-xs" />}
           {busy ? 'Waiting for wallet…' : 'Continue with BSV wallet'}
         </button>
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-        <button onClick={onCancel} className="mt-6 text-sm text-neutral-500 hover:text-black">
+        {error && <div role="alert" className="alert alert-error alert-soft mt-4 text-sm"><span>{error}</span></div>}
+        <button onClick={onCancel} className="btn btn-ghost btn-sm mt-2">
           Back to marketplace
         </button>
       </div>

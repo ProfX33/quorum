@@ -9,8 +9,7 @@ const toLocalInput = (date) => {
   return d.toISOString().slice(0, 16);
 };
 
-const inputClass =
-  'w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-black';
+const inputClass = 'input input-bordered w-full';
 
 /**
  * Create form for a sell offer (mode "offer") or a buy request (mode "request").
@@ -63,41 +62,41 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-neutral-200 p-5">
-      <h2 className="font-medium">
+    <form onSubmit={handleSubmit} className="card card-border bg-base-200 card-body">
+      <h2 className="card-title">
         {answering ? `Answer request “${answering.name}”` : isOffer ? 'New sell offer' : 'New buy request'}
       </h2>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">
-          <span className="text-neutral-500">Type</span>
-          <select value={form.kind} onChange={set('kind')} className={inputClass}>
+      <div className="mt-4 grid gap-5 sm:grid-cols-2">
+        <label className="fieldset text-sm">
+          <span className="label">Type</span>
+          <select value={form.kind} onChange={set('kind')} className="select select-bordered w-full">
             {KINDS.map((k) => (
               <option key={k}>{k}</option>
             ))}
           </select>
         </label>
-        <label className="text-sm">
-          <span className="text-neutral-500">Name</span>
+        <label className="fieldset text-sm">
+          <span className="label">Name</span>
           <input required maxLength={200} value={form.name} onChange={set('name')} className={inputClass} />
         </label>
-        <label className="text-sm">
-          <span className="text-neutral-500">Category</span>
+        <label className="fieldset text-sm">
+          <span className="label">Category</span>
           <input required maxLength={100} value={form.category} onChange={set('category')} className={inputClass} />
         </label>
-        <label className="text-sm">
-          <span className="text-neutral-500">Region</span>
+        <label className="fieldset text-sm">
+          <span className="label">Region</span>
           <input required maxLength={100} value={form.region} onChange={set('region')} className={inputClass} />
         </label>
-        <label className="text-sm sm:col-span-2">
-          <span className="text-neutral-500">Description</span>
-          <textarea rows={3} maxLength={5000} value={form.description} onChange={set('description')} className={inputClass} />
+        <label className="fieldset text-sm sm:col-span-2">
+          <span className="label">Description</span>
+          <textarea rows={3} maxLength={5000} value={form.description} onChange={set('description')} className="textarea textarea-bordered w-full" />
         </label>
-        <label className="text-sm">
-          <span className="text-neutral-500">{isOffer ? 'Price (sats)' : 'Max. price you pay (sats)'}</span>
+        <label className="fieldset text-sm">
+          <span className="label">{isOffer ? 'Price (sats)' : 'Max. price you pay (sats)'}</span>
           <input required type="number" min={1} step={1} value={form.price} onChange={set('price')} className={inputClass} />
         </label>
-        <label className="text-sm">
-          <span className="text-neutral-500">Deadline</span>
+        <label className="fieldset text-sm">
+          <span className="label">Deadline</span>
           <input
             required
             type="datetime-local"
@@ -108,18 +107,18 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
           />
         </label>
         {isOffer && form.kind === 'data' && (
-          <div className="text-sm sm:col-span-2">
-            <span className="text-neutral-500">Commitment: sha256 of the encrypted data</span>
-            <div className="flex gap-2">
+          <div className="fieldset text-sm sm:col-span-2">
+            <span className="label">Commitment: sha256 of the encrypted data</span>
+            <div className="join w-full">
               <input
                 required
                 pattern="[0-9a-fA-F]{64}"
                 placeholder="64 hex characters"
                 value={form.dataHash}
                 onChange={set('dataHash')}
-                className={`${inputClass} font-mono text-xs`}
+                className={`${inputClass} join-item font-mono text-xs`}
               />
-              <label className="shrink-0 cursor-pointer rounded-md border border-neutral-300 px-3 py-2 hover:border-black">
+              <label className="btn btn-outline join-item shrink-0">
                 From file
                 <input type="file" className="hidden" onChange={handleFile} />
               </label>
@@ -127,15 +126,13 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
           </div>
         )}
       </div>
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-      <div className="mt-5 flex gap-3">
-        <button
-          disabled={busy}
-          className="rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50"
-        >
+      {error && <div role="alert" className="alert alert-error alert-soft mt-3 text-sm"><span>{error}</span></div>}
+      <div className="card-actions mt-5">
+        <button disabled={busy} className="btn btn-primary">
+          {busy && <span className="loading loading-spinner loading-xs" />}
           {busy ? 'Publishing…' : 'Publish'}
         </button>
-        <button type="button" onClick={onCancel} className="text-sm text-neutral-500 hover:text-black">
+        <button type="button" onClick={onCancel} className="btn btn-ghost">
           Cancel
         </button>
       </div>
