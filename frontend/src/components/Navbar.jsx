@@ -40,13 +40,13 @@ export default function Navbar({ user, onSignIn, onLogout, nav, counts }) {
   }
 
   return (
-    <header className="navbar sticky top-0 z-10 border-b border-white/10 bg-base-200 px-6">
+    <header className="navbar sticky top-0 z-10 max-md:flex-wrap border-b border-white/10 bg-base-200 px-6">
       <div className="navbar-start">
         <a href="#/" aria-label="Home" onClick={() => nav.goHome()}>
-          <img src="/logo.svg" alt="Logo" className="h-8" />
+          <img src="/logo.svg" alt="Quorum" className="h-8" />
         </a>
       </div>
-      <nav className="navbar-center">
+      <nav className="navbar-center order-last w-full overflow-x-auto md:order-none md:w-auto">
         <ul role="tablist" className="menu menu-horizontal gap-2 px-1">
           {TABS.map(([key, label]) => (
             <li key={key}>

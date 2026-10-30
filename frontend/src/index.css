@@ -43,3 +43,16 @@ body {
 code {
   font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
 }
+
+/* Landing page art */
+@keyframes landing-flow { to { stroke-dashoffset: -24; } }
+@keyframes landing-spin { to { transform: rotate(360deg); } }
+@keyframes landing-float { 50% { transform: translateY(-5px); } }
+@keyframes landing-twinkle { 50% { opacity: 0.2; } }
+.landing-flow { animation: landing-flow 1.2s linear infinite; }
+.landing-spin { animation: landing-spin 60s linear infinite; }
+.landing-float { animation: landing-float 4s ease-in-out infinite; }
+.landing-twinkle { animation: landing-twinkle 3s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-flow, .landing-spin, .landing-float, .landing-twinkle { animation: none; }
+}
