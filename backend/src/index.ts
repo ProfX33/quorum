@@ -7,6 +7,20 @@ import {
 } from "./auth.ts";
 import { migrate } from "./db.ts";
 import {
+  MAX_DATA_BYTES,
+  checkPayments,
+  confirmReceipt,
+  deliverKey,
+  delivery,
+  expireDue,
+  markClaimed,
+  offerData,
+  paymentRequest,
+  sellerTasks,
+  storeData,
+  submitPayment,
+} from "./delivery.ts";
+import {
   createOffer,
   createRequest,
   filtersFrom,
@@ -37,19 +51,38 @@ const readBody = async (req: Request): Promise<Record<string, unknown>> =>
   (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
 const unauthorized = () => json({ error: "Unauthorized" }, { status: 401 });
+const notFound = () => json({ error: "Not found" }, { status: 404 });
+/** Results of delivery.ts carry their HTTP status on failure. */
+const reply = (result: object | { error: string; status: number }) =>
+  "error" in result ? json({ error: result.error }, { status: result.status }) : json(result);
 const created = (result: { id: string } | { error: string }) =>
   "error" in result ? json(result, { status: 400 }) : json(result, { status: 201 });
 
 await migrate();
 
-// Deadlines are settled in the background; see settleDue in market.ts.
-const settle = () => settleDue().catch((e) => console.error("Settlement failed", e));
+// Deadlines are settled in the background; see settleDue in market.ts. Payments are
+// followed until the network has seen them; see checkPayments in delivery.ts.
+let settling = false;
+const settle = async () => {
+  if (settling) return;
+  settling = true;
+  try {
+    await settleDue();
+    await expireDue();
+  } catch (e) {
+    console.error("Settlement failed", e);
+  } finally {
+    settling = false;
+  }
+};
 await settle();
 setInterval(settle, 3000);
+setInterval(() => checkPayments().catch((e) => console.error("Payment check failed", e)), 5000);
 
 const server = Bun.serve({
   hostname,
   port,
+  maxRequestBodySize: MAX_DATA_BYTES + 1024 * 1024,
   routes: {
     "/api/health": () => json({ status: "ok" }),
 
@@ -141,6 +174,92 @@ const server = Bun.serve({
         if (!user) return unauthorized();
         const ok = isUuid(req.params.id) && (await withdrawBid(user.id, req.params.id));
         return ok ? json({ ok }) : json({ error: "No open bid to withdraw" }, { status: 404 });
+      },
+    },
+
+    // ---------- Encrypted data, payment and delivery (see delivery.ts) ----------
+
+    // Seller uploads the ciphertext (raw body) before listing; returns its sha256 as dataHash.
+    "/api/data": {
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (Number(req.headers.get("content-length") ?? 0) > MAX_DATA_BYTES) {
+          return json({ error: "File too large" }, { status: 413 });
+        }
+        const name = new URL(req.url).searchParams.get("name") ?? "data";
+        return reply(await storeData(user.id, new Uint8Array(await req.arrayBuffer()), name));
+      },
+    },
+
+    // The ciphertext of an offer; anybody can check it against the offer's dataHash.
+    "/api/offers/:id/data": async (req) => {
+      const file = isUuid(req.params.id) ? await offerData(req.params.id) : null;
+      if (!file) return notFound();
+      return new Response(file.bytes, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="data.enc"; filename*=UTF-8''${encodeURIComponent(file.name + ".enc")}`,
+          ETag: `"${file.hash}"`,
+        },
+      });
+    },
+
+    // A winner gets the outputs to pay, then submits the signed transaction (AtomicBEEF hex).
+    "/api/bids/:id/payment": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        return isUuid(req.params.id) ? reply(await paymentRequest(user.id, req.params.id)) : notFound();
+      },
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        return reply(await submitPayment(user.id, req.params.id, (await readBody(req)).beef));
+      },
+    },
+
+    // Seller: payments to claim into the wallet and keys to deliver.
+    "/api/seller/tasks": async (req) => {
+      const user = await userFromRequest(req);
+      if (!user) return unauthorized();
+      return json({ tasks: await sellerTasks(user.id) });
+    },
+
+    "/api/bids/:id/claimed": {
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        const ok = isUuid(req.params.id) && (await markClaimed(user.id, req.params.id));
+        return ok ? json({ ok }) : notFound();
+      },
+    },
+
+    // Seller posts the data key wrapped for the buyer; buyer fetches it.
+    "/api/bids/:id/delivery": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        return isUuid(req.params.id) ? reply(await delivery(user.id, req.params.id)) : notFound();
+      },
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        return reply(await deliverKey(user.id, req.params.id, (await readBody(req)).wrappedKey));
+      },
+    },
+
+    // Buyer reports whether the data decrypted: { ok, reason? }.
+    "/api/bids/:id/receipt": {
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        const { ok, reason } = await readBody(req);
+        return reply(await confirmReceipt(user.id, req.params.id, ok, reason));
       },
     },
 

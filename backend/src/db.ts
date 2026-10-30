@@ -68,4 +68,56 @@ export async function migrate() {
     )`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS buy_offers_one_bid_per_buyer
             ON buy_offers (sell_offer_id, buyer_id) WHERE sell_offer_id IS NOT NULL`;
+
+  // ---------- Payment and data delivery (see delivery.ts) ----------
+
+  // Encrypted data uploaded by sellers, addressed by the sha256 of the ciphertext.
+  // The server never sees the key: it is AES-256-GCM, chosen in the seller's browser.
+  await sql`
+    CREATE TABLE IF NOT EXISTS data_files (
+      hash text PRIMARY KEY CHECK (hash ~ '^[0-9a-f]{64}$'),
+      owner_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      size integer NOT NULL,
+      bytes bytea NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`;
+
+  await sql`
+    ALTER TABLE sell_offers
+      -- the data key, encrypted by the seller's wallet to itself (BRC-2, counterparty 'self')
+      ADD COLUMN IF NOT EXISTS seller_key_wrap text,
+      -- winners must pay before this, set at settlement
+      ADD COLUMN IF NOT EXISTS payment_deadline timestamptz`;
+
+  // Bid lifecycle after settlement:
+  //   won → paid (txid submitted, broadcast) → delivered (key wrapped for the buyer) → received
+  //   won → defaulted (payment window missed; a late valid payment still counts)
+  //   delivered → paid again when the buyer cannot decrypt, until disputed after 3 attempts
+  await sql`
+    ALTER TABLE buy_offers
+      ADD COLUMN IF NOT EXISTS payment_prefix text,
+      ADD COLUMN IF NOT EXISTS payment_suffix text,
+      ADD COLUMN IF NOT EXISTS payment_txid text,
+      ADD COLUMN IF NOT EXISTS payment_vout integer,
+      ADD COLUMN IF NOT EXISTS payment_beef bytea,
+      ADD COLUMN IF NOT EXISTS paid_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_seen_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_checked_at timestamptz,
+      ADD COLUMN IF NOT EXISTS payment_error text,
+      ADD COLUMN IF NOT EXISTS internalized_at timestamptz,
+      ADD COLUMN IF NOT EXISTS wrapped_key text,
+      ADD COLUMN IF NOT EXISTS delivered_at timestamptz,
+      ADD COLUMN IF NOT EXISTS delivery_attempts integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS received_at timestamptz,
+      ADD COLUMN IF NOT EXISTS dispute_reason text`;
+  await sql`
+    ALTER TABLE buy_offers DROP CONSTRAINT IF EXISTS buy_offers_status_check,
+      ADD CONSTRAINT buy_offers_status_check CHECK (status IN
+        ('open', 'won', 'lost', 'expired', 'paid', 'delivered', 'received', 'disputed', 'defaulted'))`;
+  // One transaction pays exactly one bid.
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS buy_offers_payment_txid
+            ON buy_offers (payment_txid) WHERE payment_txid IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS buy_offers_unconfirmed
+            ON buy_offers (paid_at) WHERE payment_txid IS NOT NULL AND payment_seen_at IS NULL`;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchMe } from './api';
+import SellerWorker from './components/SellerWorker';
 import Login from './pages/Login';
 import Market from './pages/Market';
 import OfferDetail from './pages/OfferDetail';
@@ -25,8 +26,14 @@ export default function App() {
   if (signingIn && !user) {
     return <Login onLogin={(u) => (setUser(u), setSigningIn(false))} onCancel={() => setSigningIn(false)} />;
   }
-  if (offerId) {
-    return <OfferDetail id={offerId} user={user} onSignIn={() => setSigningIn(true)} />;
-  }
-  return <Market user={user} onSignIn={() => setSigningIn(true)} onLogout={() => setUser(null)} />;
+  return (
+    <>
+      {offerId ? (
+        <OfferDetail id={offerId} user={user} onSignIn={() => setSigningIn(true)} />
+      ) : (
+        <Market user={user} onSignIn={() => setSigningIn(true)} onLogout={() => setUser(null)} />
+      )}
+      <SellerWorker user={user} />
+    </>
+  );
 }

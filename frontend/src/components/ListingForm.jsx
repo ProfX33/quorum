@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { createOffer, createRequest, sha256File } from '../api';
+import { createOffer, createRequest } from '../api';
+import { encryptAndUpload } from '../delivery';
 
 const KINDS = ['data', 'service', 'product'];
 
@@ -28,28 +29,24 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
     description: '',
     price: '',
     deadline: toLocalInput(defaultDeadline),
-    dataHash: '',
   });
-  const [busy, setBusy] = useState(false);
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  async function handleFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const dataHash = await sha256File(file);
-    setForm((f) => ({ ...f, dataHash }));
-  }
-
   async function handleSubmit(e) {
     e.preventDefault();
-    setBusy(true);
+    setBusy('Publishing…');
     setError('');
-    const { price, deadline, dataHash, ...rest } = form;
+    const { price, deadline, ...rest } = form;
     const body = { ...rest, deadline: new Date(deadline).toISOString() };
     try {
       if (isOffer) {
-        await createOffer({ ...body, price: Number(price), dataHash: dataHash || undefined, requestId: answering?.id });
+        // Data is encrypted here; only the ciphertext and the wallet-wrapped key leave the browser.
+        const data = form.kind === 'data' ? await encryptAndUpload(file, setBusy) : {};
+        setBusy('Publishing…');
+        await createOffer({ ...body, ...data, price: Number(price), requestId: answering?.id });
       } else {
         await createRequest({ ...body, maxPrice: Number(price) });
       }
@@ -57,7 +54,7 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
     } catch (err) {
       setError(err.message);
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   }
 
@@ -107,30 +104,26 @@ export default function ListingForm({ mode, answering, onDone, onCancel }) {
           />
         </label>
         {isOffer && form.kind === 'data' && (
-          <div className="fieldset text-sm sm:col-span-2">
-            <span className="label">Commitment: sha256 of the encrypted data</span>
-            <div className="join w-full">
-              <input
-                required
-                pattern="[0-9a-fA-F]{64}"
-                placeholder="64 hex characters"
-                value={form.dataHash}
-                onChange={set('dataHash')}
-                className={`${inputClass} join-item font-mono text-xs`}
-              />
-              <label className="btn btn-outline join-item shrink-0">
-                From file
-                <input type="file" className="hidden" onChange={handleFile} />
-              </label>
-            </div>
-          </div>
+          <label className="fieldset text-sm sm:col-span-2">
+            <span className="label">Data file (max. 20 MB)</span>
+            <input
+              required
+              type="file"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="file-input file-input-bordered w-full"
+            />
+            <span className="label whitespace-normal text-xs">
+              Encrypted in your browser before upload. The key stays locked in your wallet and is
+              released to each buyer once their payment is on-chain. The file name and size are public.
+            </span>
+          </label>
         )}
       </div>
       {error && <div role="alert" className="alert alert-error alert-soft mt-3 text-sm"><span>{error}</span></div>}
       <div className="card-actions mt-5">
-        <button disabled={busy} className="btn btn-primary">
+        <button disabled={!!busy} className="btn btn-primary">
           {busy && <span className="loading loading-spinner loading-xs" />}
-          {busy ? 'Publishing…' : 'Publish'}
+          {busy || 'Publish'}
         </button>
         <button type="button" onClick={onCancel} className="btn btn-ghost">
           Cancel

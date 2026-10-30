@@ -1,10 +1,15 @@
 import { sql } from "./db.ts";
+import { derivationNonce, txUrl } from "./payments.ts";
 import { findPaymentGroup } from "./settlement.ts";
 
 export const KINDS = ["data", "service", "product"] as const;
 type Kind = (typeof KINDS)[number];
 
 const MAX_DEADLINE_MS = 365 * 24 * 60 * 60 * 1000;
+const PAYMENT_WINDOW_MINUTES = Number(process.env.PAYMENT_WINDOW_MINUTES ?? 60);
+
+// Bid states of the buyers who formed the payment group at settlement.
+const GROUP_STATES = ["won", "paid", "delivered", "received", "disputed", "defaulted"];
 
 export const isUuid = (v: unknown): v is string =>
   typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -66,7 +71,9 @@ const toOffer = (row: any, userId: string | null) => {
     price,
     deadline: new Date(row.deadline).toISOString(),
     dataHash: row.data_hash,
+    file: row.file_name ? { name: row.file_name, size: Number(row.file_size) } : null,
     status: row.status,
+    paymentDeadline: row.payment_deadline ? new Date(row.payment_deadline).toISOString() : null,
     seller: row.seller_key,
     createdAt: new Date(row.created_at).toISOString(),
     settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
@@ -74,9 +81,21 @@ const toOffer = (row: any, userId: string | null) => {
     payers: row.status === "open" ? (group?.length ?? 0) : Number(row.winner_count),
     share: group ? group[0]!.amount : null,
     mine: userId !== null && row.seller_id === userId,
+    // Counts per bid state of the payment group, for the seller only.
+    sales: userId !== null && row.seller_id === userId && row.status === "sold" ? row.sales ?? {} : null,
     myBid: row.my_max_price == null
       ? null
-      : { maxPrice: Number(row.my_max_price), status: row.my_status, amount: row.my_amount == null ? null : Number(row.my_amount) },
+      : {
+          id: row.my_id,
+          maxPrice: Number(row.my_max_price),
+          status: row.my_status,
+          amount: row.my_amount == null ? null : Number(row.my_amount),
+          txid: row.my_txid,
+          txUrl: row.my_txid ? txUrl(row.my_txid) : null,
+          paymentSeen: row.my_seen_at != null,
+          paymentError: row.my_payment_error,
+          disputeReason: row.my_dispute_reason,
+        },
   };
 };
 
@@ -85,10 +104,17 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
   const rows = await sql`
     SELECT s.*, u.identity_key AS seller_key,
       COALESCE((SELECT json_agg(b.max_price ORDER BY b.created_at) FROM buy_offers b WHERE b.sell_offer_id = s.id), '[]') AS bid_maxima,
-      (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'won') AS winner_count,
-      my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount
+      (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = ANY(${GROUP_STATES})) AS winner_count,
+      (SELECT json_object_agg(g.status, g.n) FROM (
+        SELECT b.status, count(*) AS n FROM buy_offers b
+        WHERE b.sell_offer_id = s.id AND b.status = ANY(${GROUP_STATES}) GROUP BY b.status) g) AS sales,
+      f.name AS file_name, f.size AS file_size,
+      my.id AS my_id, my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount,
+      my.payment_txid AS my_txid, my.payment_seen_at AS my_seen_at, my.payment_error AS my_payment_error,
+      my.dispute_reason AS my_dispute_reason
     FROM sell_offers s
     JOIN users u ON u.id = s.seller_id
+    LEFT JOIN data_files f ON f.hash = s.data_hash
     LEFT JOIN buy_offers my ON my.sell_offer_id = s.id AND my.buyer_id = ${userId}::uuid
     WHERE (${id}::uuid IS NULL OR s.id = ${id}::uuid)
       AND (${id}::uuid IS NOT NULL OR ${status}::text = 'all' OR s.status = ${status}::text)
@@ -108,10 +134,19 @@ export async function createOffer(sellerId: string, body: Record<string, unknown
   const dataHash = typeof body.dataHash === "string" && body.dataHash ? body.dataHash.toLowerCase() : null;
   if (dataHash && !/^[0-9a-f]{64}$/.test(dataHash)) return { error: "dataHash must be a hex sha256" };
   if (listing.kind === "data" && !dataHash) return { error: "Data offers need a dataHash committing to the encrypted data" };
+  const keyWrap = typeof body.sellerKeyWrap === "string" ? body.sellerKeyWrap.toLowerCase() : null;
+  if (listing.kind === "data" && !(keyWrap && /^[0-9a-f]{2,1024}$/.test(keyWrap) && keyWrap.length % 2 === 0)) {
+    return { error: "Data offers need sellerKeyWrap: the data key encrypted by your wallet to itself" };
+  }
   const requestId = body.requestId ?? null;
   if (requestId !== null && !isUuid(requestId)) return { error: "Invalid requestId" };
 
   return sql.begin(async (tx) => {
+    if (listing.kind === "data") {
+      // The data must be uploaded first (POST /api/data), by this seller.
+      const [file] = await tx`SELECT owner_id FROM data_files WHERE hash = ${dataHash}`;
+      if (!file || file.owner_id !== sellerId) return { error: "Upload the encrypted data before listing it" };
+    }
     if (requestId) {
       const [request] = await tx`
         SELECT buyer_id, deadline FROM buy_offers
@@ -122,9 +157,10 @@ export async function createOffer(sellerId: string, body: Record<string, unknown
       if (listing.deadline > new Date(request.deadline)) return { error: "Deadline must not be after the request's deadline" };
     }
     const [row] = await tx`
-      INSERT INTO sell_offers (seller_id, kind, category, region, name, description, price, deadline, data_hash)
+      INSERT INTO sell_offers (seller_id, kind, category, region, name, description, price, deadline, data_hash, seller_key_wrap)
       VALUES (${sellerId}, ${listing.kind}, ${listing.category}, ${listing.region}, ${listing.name},
-              ${listing.description}, ${body.price}, ${listing.deadline}, ${dataHash})
+              ${listing.description}, ${body.price}, ${listing.deadline}, ${dataHash},
+              ${listing.kind === "data" ? keyWrap : null})
       RETURNING id`;
     // The requester becomes the first bidder on the answering offer.
     if (requestId) await tx`UPDATE buy_offers SET sell_offer_id = ${row.id} WHERE id = ${requestId}`;
@@ -224,11 +260,16 @@ export async function settleDue() {
         Number(offer.price),
         bids.map((b: any) => ({ id: b.id, maxPrice: Number(b.max_price) })),
       );
+      // Each winner pays to their own BRC-29 key of the seller (see payments.ts).
       for (const { id: bidId, amount } of group ?? []) {
-        await tx`UPDATE buy_offers SET status = 'won', amount = ${amount} WHERE id = ${bidId}`;
+        await tx`UPDATE buy_offers SET status = 'won', amount = ${amount},
+                   payment_prefix = ${derivationNonce()}, payment_suffix = ${derivationNonce()}
+                 WHERE id = ${bidId}`;
       }
       await tx`UPDATE buy_offers SET status = 'lost' WHERE sell_offer_id = ${id} AND status = 'open'`;
-      await tx`UPDATE sell_offers SET status = ${group ? "sold" : "unsold"}, settled_at = now() WHERE id = ${id}`;
+      await tx`UPDATE sell_offers SET status = ${group ? "sold" : "unsold"}, settled_at = now(),
+                 payment_deadline = ${group ? new Date(Date.now() + PAYMENT_WINDOW_MINUTES * 60_000) : null}
+               WHERE id = ${id}`;
     });
   }
   await sql`UPDATE buy_offers SET status = 'expired'

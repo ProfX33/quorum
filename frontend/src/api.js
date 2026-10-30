@@ -4,7 +4,11 @@ import { WalletClient } from '@bsv/sdk';
 const PROTOCOL = [2, 'tum hackathon login'];
 const KEY_ID = '1';
 
-async function request(path, body, method) {
+let wallet;
+/** The user's BRC-100 wallet (BSV Desktop / BSV Browser). Keys never leave it. */
+export const getWallet = () => (wallet ??= new WalletClient('auto', window.location.hostname));
+
+export async function request(path, body, method) {
   const res = await fetch(path, {
     method: method ?? (body ? 'POST' : 'GET'),
     credentials: 'include',
@@ -12,7 +16,7 @@ async function request(path, body, method) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `Request failed (${res.status})`), { status: res.status });
   return data;
 }
 
@@ -32,15 +36,9 @@ export const placeBid = (offerId, maxPrice) => request(`/api/offers/${offerId}/b
 export const withdrawBid = (offerId) => request(`/api/offers/${offerId}/bid`, undefined, 'DELETE');
 export const withdrawRequest = (requestId) => request(`/api/requests/${requestId}`, undefined, 'DELETE');
 
-/** Hex sha256 of a file, used as the commitment to the encrypted data. */
-export async function sha256File(file) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 /** Signs a server challenge with the user's BSV wallet; creates the account on first login. */
 export async function loginWithWallet() {
-  const wallet = new WalletClient('auto', window.location.hostname);
+  const wallet = getWallet();
   const { publicKey: identityKey } = await wallet.getPublicKey({ identityKey: true });
   const { nonce, message } = await request('/api/auth/challenge', { identityKey });
   const { signature } = await wallet.createSignature({

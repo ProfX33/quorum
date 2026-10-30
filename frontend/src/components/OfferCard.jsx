@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid } from '../api';
+import { BuyerDeal, SellerDeal } from './Deal';
 
 export function useNow() {
   const [now, setNow] = useState(Date.now());
@@ -39,7 +40,20 @@ export function Attributes({ item }) {
   );
 }
 
-export const STATUS_LABEL = { sold: 'Sold', unsold: 'Not sold', won: 'You won', lost: 'Not in payment group', expired: 'Expired' };
+export const STATUS_LABEL = {
+  sold: 'Sold',
+  unsold: 'Not sold',
+  won: 'You won',
+  lost: 'Not in payment group',
+  expired: 'Expired',
+  paid: 'Paid',
+  delivered: 'Delivered',
+  received: 'Received',
+  disputed: 'Disputed',
+  defaulted: 'Payment missed',
+};
+
+const fileSize = (n) => (n < 1024 * 1024 ? `${Math.ceil(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false }) {
   const [maxPrice, setMaxPrice] = useState(offer.myBid?.maxPrice ?? '');
@@ -92,6 +106,17 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
             <dd className="truncate font-mono" title={offer.dataHash}>{offer.dataHash}</dd>
           </>
         )}
+        {offer.file && (
+          <>
+            <dt>File</dt>
+            <dd className="truncate">
+              {offer.file.name} · {fileSize(offer.file.size)} encrypted ·{' '}
+              <a href={`/api/offers/${offer.id}/data`} className="link" title="Download the ciphertext to check it against the commitment">
+                ciphertext
+              </a>
+            </dd>
+          </>
+        )}
         <dt>Bidders</dt>
         <dd>
           {offer.bidCount}
@@ -103,15 +128,18 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
         </dd>
       </dl>
 
-      {offer.myBid && (
-        <div role="alert" className={`alert alert-soft text-sm ${offer.myBid.status === 'won' ? 'alert-success' : 'alert-info'}`}>
+      {offer.myBid && ['open', 'lost'].includes(offer.myBid.status) && (
+        <div role="alert" className="alert alert-soft alert-info text-sm">
           <span>
             Your max: {sats(offer.myBid.maxPrice)}
-            {offer.myBid.status === 'won' && <strong> — you pay {sats(offer.myBid.amount)}</strong>}
-            {offer.myBid.status !== 'open' && offer.myBid.status !== 'won' && ` — ${STATUS_LABEL[offer.myBid.status]}`}
+            {offer.myBid.status === 'lost' && ` — ${STATUS_LABEL.lost}`}
           </span>
         </div>
       )}
+      {offer.myBid && !['open', 'lost'].includes(offer.myBid.status) && (
+        <BuyerDeal offer={offer} now={now} onChange={onChange} />
+      )}
+      {offer.mine && offer.sales && <SellerDeal offer={offer} />}
 
       {offer.mine && open && <div role="alert" className="alert alert-soft alert-info text-sm"><span>This is your offer — you can't bid on it.</span></div>}
       {!user && !offer.mine && open && onSignIn && (
