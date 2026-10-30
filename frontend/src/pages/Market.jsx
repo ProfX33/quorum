@@ -64,6 +64,12 @@ export default function Market({ user, onSignIn, onLogout }) {
     onLogout();
   }
 
+  // The form lives in the listings, which the activity tab replaces.
+  function openForm(mode) {
+    setForm({ mode });
+    if (tab === 'activity') setTab(mode === 'offer' ? 'offers' : 'requests');
+  }
+
   const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
   const all = tab === 'offers' ? results.offers : results.requests;
   const visible = all.filter((i) => (!onlyMine || (!!user && isRelated(i, tab))));
@@ -99,8 +105,8 @@ export default function Market({ user, onSignIn, onLogout }) {
         <div className="navbar-end gap-3">
           {user ? (
             <>
-              <button onClick={() => setForm({ mode: 'offer' })} className="btn btn-primary btn-sm">+ Sell</button>
-              <button onClick={() => setForm({ mode: 'request' })} className="btn btn-outline btn-primary btn-sm">+ Request</button>
+              <button onClick={() => openForm('offer')} className="btn btn-primary btn-sm">+ Sell</button>
+              <button onClick={() => openForm('request')} className="btn btn-outline btn-primary btn-sm">+ Request</button>
               <div className="dropdown dropdown-end">
                 <div tabIndex={0} role="button" className={`btn btn-ghost btn-sm gap-2 ${user.name ? '' : 'font-mono'}`} title={user.identityKey}>
                   <Avatar person={user} size="xs" />

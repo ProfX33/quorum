@@ -21,9 +21,9 @@ export default function RequestCard({ request, user, now, onAnswer, onChange }) 
         </div>
       </div>
       {request.description && <p className="mt-3 whitespace-pre-line text-sm text-white/90">{request.description}</p>}
-      <p className="mt-3 flex items-center gap-2 text-xs text-white/70">
+      <div className="mt-3 flex items-center gap-2 text-xs text-white/70">
         Buyer <UserLink person={request.buyerProfile} you={request.mine} />
-      </p>
+      </div>
       {user && open && (
         <div className="card-actions">
           {request.mine ? (
