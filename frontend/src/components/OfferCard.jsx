@@ -121,8 +121,8 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
       {offer.description && <p className="mt-3 whitespace-pre-line text-sm text-white/90">{offer.description}</p>}
       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-white/70">
         <dt>Seller</dt>
-        <dd className="flex items-center gap-2 font-mono">
-          {offer.mine ? 'you' : shortKey(offer.seller)}
+        <dd className="flex min-w-0 items-center gap-2">
+          <UserLink person={offer.sellerProfile} you={offer.mine} />
           <KindBadge kind={offer.sellerKind} />
         </dd>
         {offer.dataHash && (
