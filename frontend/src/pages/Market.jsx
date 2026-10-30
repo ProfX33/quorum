@@ -151,7 +151,7 @@ export default function Market({ user, onSignIn, onLogout }) {
             {/* Narrow down: status view, ownership, order */}
             <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
               {/* Left: view selection */}
-              <div role="tablist" className="tabs tabs-box tabs-sm flex-nowrap bg-base-100">
+              <div role="tablist" className="tabs tabs-box flex-nowrap gap-1 bg-base-100 p-1.5">
                 {views.map(([key, label]) => {
                   const active = currentView === key;
                   return (
@@ -160,12 +160,12 @@ export default function Market({ user, onSignIn, onLogout }) {
                       role="tab"
                       aria-selected={active}
                       onClick={() => setView(key)}
-                      className={`tab gap-2 px-4 font-medium ${active ? 'tab-active bg-primary! text-primary-content!' : ''}`}
+                      className={`tab h-9 gap-2.5 px-4 text-sm font-medium ${active ? 'tab-active bg-primary! text-primary-content!' : ''}`}
                     >
                       {label}
                       <span
-                        className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-semibold tabular-nums ${
-                          active ? 'bg-base-300 text-secondary' : 'bg-base-300/70 text-base-content/80'
+                        className={`tabular-nums text-sm font-semibold ${
+                          active ? 'text-primary-content/80' : 'text-base-content/60'
                         }`}
                       >
                         {counts[key]}
