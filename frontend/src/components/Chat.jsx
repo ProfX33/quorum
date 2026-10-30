@@ -7,8 +7,6 @@ import { Avatar, UserLink } from './UserLink';
 const FALLBACK_REFRESH_MS = 15000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Must match backend/src/messages.ts
 const IMAGE_TYPES = 'image/png,image/jpeg,image/gif,image/webp';
-// How close to the bottom the reader must be for new messages to scroll into view.
-const STICK_TO_BOTTOM_PX = 80;
 
 // Bid states in which the buyer has paid, so they are in the chat (as in backend/src/profiles.ts).
 const PAID_STATES = ['paid', 'delivered', 'received', 'disputed'];
@@ -83,18 +81,7 @@ function Chat({ offer, messages, onSent, loadError }) {
   const [preview, setPreview] = useState(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const list = useRef(null);
   const fileInput = useRef(null);
-  const atBottom = useRef(true);
-
-  const scrollDown = () => {
-    if (list.current) list.current.scrollTop = list.current.scrollHeight;
-  };
-
-  // New messages scroll into view, unless the reader has scrolled up to read older ones.
-  useEffect(() => {
-    if (atBottom.current || messages[messages.length - 1]?.mine) scrollDown();
-  }, [messages]);
 
   useEffect(() => {
     if (!image) return setPreview(null);
@@ -140,14 +127,8 @@ function Chat({ offer, messages, onSent, loadError }) {
           </p>
         </div>
 
-        <div
-          ref={list}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_PX;
-          }}
-          className="flex max-h-[28rem] min-h-40 flex-col gap-1 overflow-y-auto overflow-x-hidden rounded-box bg-base-300/50 p-3"
-        >
+        {/* Grows with its messages, so the whole conversation is visible without scrolling inside it. */}
+        <div className="flex min-h-40 flex-col gap-1 overflow-x-hidden rounded-box bg-base-300/50 p-3">
           {messages.length === 0 && <p className="m-auto text-sm text-white/50">No messages yet.</p>}
           {messages.map((m) => (
             <div key={m.id} className={`chat min-w-0 ${m.mine ? 'chat-end' : 'chat-start'}`}>
@@ -160,10 +141,10 @@ function Chat({ offer, messages, onSent, loadError }) {
               <div className={`chat-bubble ${m.mine ? 'chat-bubble-primary' : ''} flex min-w-0 max-w-[85%] flex-col gap-2`}>
                 {m.imageUrl && (
                   <a href={m.imageUrl} target="_blank" rel="noreferrer">
-                    <img src={m.imageUrl} alt="" loading="lazy" className="max-h-64 max-w-full rounded" onLoad={() => atBottom.current && scrollDown()} />
+                    <img src={m.imageUrl} alt="" loading="lazy" className="max-h-64 max-w-full rounded" />
                   </a>
                 )}
-                {m.text && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{m.text}</span>}
+                {m.text && <span className="whitespace-pre-wrap wrap-anywhere">{m.text}</span>}
               </div>
             </div>
           ))}
@@ -190,7 +171,7 @@ function Chat({ offer, messages, onSent, loadError }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) send(e);
             }}
-            className="textarea textarea-bordered textarea-sm field-sizing-content max-h-40 min-h-0 min-w-0 flex-1 resize-none [overflow-wrap:anywhere]"
+            className="textarea textarea-bordered textarea-sm field-sizing-content max-h-40 min-h-0 min-w-0 flex-1 resize-none wrap-anywhere"
           />
           <button disabled={sending || (!text.trim() && !image)} className="btn btn-primary btn-sm">
             {sending && <span className="loading loading-spinner loading-xs" />}
