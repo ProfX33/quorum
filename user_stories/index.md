@@ -1,20 +1,56 @@
 # Table of Contents
 
 
-# Project Goal
-- Create a Marketplace where users or agents can trade or buy services and data.
+PROJECT.md — Project context for coding agents
 
-- Marketplace is based on a reputation and collaboration system.
+Read this file together with AGENTS.md (from the BSV developer pack). If anything here conflicts with AGENTS.md or BSV_STACK_COMPLETE_GUIDE.md, the developer pack wins for anything about BSV APIs, package versions and wallet setup. This file wins on what we are building and what is in scope.
 
-- Multiple agents can "Crowd-Fund" purchases and share the bought data. Data can then be acquired more cheaply for each individual agent.
-Each agent specifies a maximum price is willing to pay. Once there is a group of agents, where the price divided by the size of that group is lower than the maximum willing payment price of each paying agent, the data is bought and shared across these agents.
+1. What we are building
 
-- Transactions run as Crypto Payments using BSV-Wallet / BSV-SDK. The user is also tied to the wallet.
-- The project is intended for agents, however to visualize it well for the hackathon, users can interact with the market using a front end interface.
-- To see what kind of listings can currently be paid for there is a search functionality that agents can use easily.
+It is a non-custodial group-buy protocol and marketplace for data and services on BSV for agents or users. Sellers list datasets or services at a fixed price. Buyers (mostly AI agents, also humans through a web UI) place bids on a listing with the most they're willing to pay. When enough bids exist that listing_price / group_size <= every group member's max bid, the group locks, each member pays an equal share straight from their own wallet, and the seller delivers the data to every member. Agents get data cheaper by pooling demand, and sellers reach buyers who would never pay the full price alone. A reputation score built from completed, paid deals helps agents decide whom to buy from.
+
+Hackathon: TUM Blockchain & AI Hackathon, BSV Association track ("DeFi Rails for Agentic Payments"), 30–31 October 2026. The group-buy protocol is the DeFi product and the core of the project. The marketplace UI and the agent show it working.
+
+2. Core concepts
+Concept	Meaning
+Identity	A participant is their wallet's identity public key. No usernames or passwords. Sign-in = the wallet signs a challenge.
+Listing	{id, seller_identity_key, title, description, tags, price_sats, data_hash, delivery_type, expires_at}. data_hash = SHA-256 of the payload, committed up front so buyers can check what they receive.
+Bid	{listing_id, buyer_identity_key, max_price_sats, expires_at, signature}. Signed by the buyer's wallet, so no one can fake a bid.
+Group	The set of bids that clears a listing. Locked once formed; each member owes ceil(price / k).
+Deal	A group whose members all paid, with on-chain txids and a delivery receipt. Deals are where reputation comes from.
+Reputation	Derived only from completed deals: number of deals, total value settled, delivery rate, and ratings that buyers sign after delivery. One rating per buyer per deal. Display it, don't over-engineer it.
+3. Matching rule (deterministic)
+
+For a listing with price P and open, unexpired bids:
+
+Sort bids by max_price_sats descending: b1 >= b2 >= ... >= bn.
+Find the largest k such that ceil(P / k) <= b_k.
+If such a k exists, the top k bids form the group, each paying share = ceil(P / k). Bids below b_k stay open for a later round, if the listing allows repeat sales.
+Ties at the cut-off: earliest bid wins.
+
+Choosing the largest k gives everyone the lowest share. The matching engine should be a pure function with unit tests. It runs off-chain, and only payments and receipts go on-chain.
+
+4. Payment flow
+
+MVP (build this first): direct split payments
+
+Group locks, and every member is notified (an agent learns it by polling or from a webhook).
+Each member pays share directly to the seller's address from their own wallet (createAction). Put an OP_RETURN output on each payment tagging {protocol_id, listing_id, group_id} so the payments can be found and audited on-chain.
+The backend watches for all k payments (by txid, as reported by clients and checked against the chain).
+When all are paid, the seller delivers (see §6). If a member doesn't pay within the timeout, the group dissolves and the seller refunds paid members out of their own wallet (that refund is a known MVP limitation; say so in the README), and the listing goes back to matching.
+
+Stretch: atomic assurance contract One transaction with a single output paying P to the seller. Each member adds one input worth share, signed with SIGHASH_ALL | SIGHASH_ANYONECANPAY, so their signature commits only to the seller output and their own input. The transaction can't be broadcast until it is fully funded, so nobody ever pays for a group that fails to fill. Before you build this, check in the developer pack whether BRC-100 wallets (createAction / signAction) can produce ANYONECANPAY signatures. If they can't, stay with the MVP.
+
+5. Visuals
+All current available listings should be searchable and visible to agents.
+The project should have a frontend where a user can view the listings and list things / buy things themselves in a graphical interface. The user can basically act like an agent. This will also be used to demonstrate functionality during the presentation.
 
 
-- Sorting sold data or services by attributes or the reputation of the seller. Agents can decide what to buy or not to buy.
+
+
+
+
+
 
 
 
