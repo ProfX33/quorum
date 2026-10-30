@@ -36,9 +36,9 @@ export function Countdown({ deadline, now }) {
 export function Attributes({ item }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1">
-      <span className="badge badge-primary badge-sm">{item.kind}</span>
-      <span className="badge badge-outline badge-sm">{item.category}</span>
-      <span className="badge badge-outline badge-sm">{item.region}</span>
+      <span className="badge badge-primary badge-sm px-3">{item.kind}</span>
+      <span className="badge badge-outline badge-sm px-3">{item.category}</span>
+      <span className="badge badge-outline badge-sm px-3">{item.region}</span>
     </div>
   );
 }

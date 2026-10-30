@@ -289,17 +289,23 @@ export default function Profile({ identityKey, user, onSignIn, onUserChange }) {
             </div>
           </section>
 
-          <div role="tablist" className="tabs tabs-box tabs-sm mt-10 w-fit bg-base-200">
+          <div role="tablist" className="tabs tabs-box mt-10 w-fit flex-nowrap gap-1 bg-base-200 p-1.5">
             {tabs.map(([key, label, count]) => (
               <button
                 key={key}
                 role="tab"
                 aria-selected={tab === key}
                 onClick={() => setTab(key)}
-                className={`tab gap-2 px-4 font-medium ${tab === key ? 'tab-active bg-primary! text-primary-content!' : ''}`}
+                className={`tab h-9 gap-2.5 px-4 text-sm font-medium ${tab === key ? 'tab-active bg-primary! text-primary-content!' : ''}`}
               >
                 {label}
-                <span className="badge badge-sm">{count}</span>
+                <span
+                  className={`tabular-nums text-sm font-semibold ${
+                    tab === key ? 'text-primary-content/80' : 'text-base-content/60'
+                  }`}
+                >
+                  {count}
+                </span>
               </button>
             ))}
           </div>
