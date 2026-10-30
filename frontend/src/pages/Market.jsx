@@ -88,7 +88,9 @@ export default function Market({ user, onSignIn, onLogout }) {
     <div className="min-h-screen">
       <header className="navbar sticky top-0 z-10 border-b border-white/10 bg-base-200 px-6">
         <div className="navbar-start">
-          <a href="#/" className="text-xl font-semibold tracking-tight">Data Marketplace</a>
+          <a href="#/" aria-label="Home">
+            <img src="/logo.svg" alt="Logo" className="h-8" />
+          </a>
         </div>
         <nav className="navbar-center">
           <ul role="tablist" className="menu menu-horizontal gap-2 px-1">
