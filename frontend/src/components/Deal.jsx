@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { request } from '../api';
-import { downloadPurchase, hasPendingPayment, payForBid, requestRedelivery, resumePayment } from '../delivery';
+import {
+  canRefund,
+  downloadPurchase,
+  hasPendingPayment,
+  payForBid,
+  refundPledges,
+  requestRedelivery,
+  resumePayment,
+} from '../delivery';
 import { Countdown, sats } from './OfferCard';
 
 function TxLink({ bid }) {
@@ -12,7 +20,7 @@ function TxLink({ bid }) {
   );
 }
 
-/** What the buyer does after settlement: pay, wait, download. */
+/** What the buyer does after settlement: pledge, wait for the group, download (or take the pledge back). */
 export function BuyerDeal({ offer, now, onChange }) {
   const bid = offer.myBid;
   const [busy, setBusy] = useState('');
@@ -33,33 +41,64 @@ export function BuyerDeal({ offer, now, onChange }) {
     }
   }
 
-  // A payment signed earlier whose submission did not get through is resubmitted, never paid twice.
+  // A pledge signed earlier whose submission did not get through is resubmitted, never pledged twice.
   useEffect(() => {
-    if (['won', 'defaulted'].includes(bid.status) && hasPendingPayment(bid.id)) {
-      run('Registering your payment…', () => resumePayment(bid.id));
+    if (['won', 'defaulted', 'lost'].includes(bid.status) && hasPendingPayment(bid.id)) {
+      run('Registering your pledge…', () => resumePayment(bid.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid.id, bid.status]);
 
   const spinner = busy && <span className="loading loading-spinner loading-xs" />;
+  const group = offer.groupPayment;
+  const refundButton = canRefund(bid) && (
+    <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => refundPledges(bid.id))} className="btn btn-primary btn-sm">
+      {spinner}
+      {busy || (bid.refundable > 0 ? `Take back ${sats(bid.refundable)}` : 'Finish taking back your pledge')}
+    </button>
+  );
   let body;
   if (bid.status === 'won') {
+    const due = bid.amount - bid.pledged;
     body = (
       <>
         <span>
-          You are in the payment group. Pay <strong>{sats(bid.amount)}</strong> straight to the seller before the
-          window closes: {offer.paymentDeadline && <Countdown deadline={offer.paymentDeadline} now={now} />}
+          {bid.pledged > 0
+            ? <>The group got smaller, so your share is now <strong>{sats(bid.amount)}</strong>. You have pledged {sats(bid.pledged)}; pledge the remaining <strong>{sats(due)}</strong></>
+            : <>You are in the payment group. Pledge your share of <strong>{sats(bid.amount)}</strong></>}{' '}
+          before the window closes: {offer.paymentDeadline && <Countdown deadline={offer.paymentDeadline} now={now} />}.
+          The seller is paid in one transaction once everyone has pledged. Until then your pledge stays yours.
         </span>
         <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => payForBid(bid.id))} className="btn btn-primary btn-sm">
           {spinner}
-          {busy || `Pay ${sats(bid.amount)}`}
+          {busy || `Pledge ${sats(due)}`}
         </button>
       </>
     );
+  } else if (bid.status === 'pledged') {
+    body = (
+      <span>
+        Pledged. Waiting for the rest of the group: {group?.pledged ?? 0} of {group?.members ?? '?'} have pledged
+        {offer.paymentDeadline && <>, window closes <Countdown deadline={offer.paymentDeadline} now={now} /></>}.
+        If the group does not complete, you can take your pledge back.
+      </span>
+    );
   } else if (bid.status === 'defaulted') {
-    body = <span>The payment window closed before you paid.</span>;
+    body = (
+      <>
+        <span>The payment window closed before you pledged, so you are out of the group.</span>
+        {refundButton}
+      </>
+    );
+  } else if (bid.status === 'lost') {
+    body = (
+      <>
+        <span>The group could not pay the price, so nothing was paid. Your pledge is yours to take back.</span>
+        {refundButton}
+      </>
+    );
   } else if (bid.status === 'paid' && !bid.paymentSeen) {
-    body = <span>Payment sent, waiting for the network to see it… <TxLink bid={bid} /></span>;
+    body = <span>The whole group has pledged. Payment sent, waiting for the network to see it… <TxLink bid={bid} /></span>;
   } else if (bid.status === 'paid' && offer.kind === 'data') {
     body = (
       <span>
@@ -117,14 +156,19 @@ export function BuyerDeal({ offer, now, onChange }) {
   return (
     <div className="grid gap-2">
       <div role="alert" className={`alert alert-soft text-sm ${tone} flex flex-wrap`}>{body}</div>
-      {bid.paymentError && bid.status === 'won' && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{bid.paymentError}. Please pay again.</span></div>}
+      {bid.paymentError && ['won', 'pledged'].includes(bid.status) && (
+        <div role="alert" className="alert alert-error alert-soft text-sm">
+          <span>{bid.paymentError}.{bid.status === 'won' ? ' Your pledge was spent elsewhere, please pledge again.' : ' Waiting for the members whose pledge was spent.'}</span>
+        </div>
+      )}
       {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error}</span></div>}
     </div>
   );
 }
 
 const SALE_STATES = [
-  ['won', 'awaiting payment'],
+  ['won', 'awaiting pledge'],
+  ['pledged', 'pledged'],
   ['paid', 'paid'],
   ['delivered', 'delivered'],
   ['received', 'received'],
@@ -142,9 +186,10 @@ export function SellerDeal({ offer }) {
           <span key={k} className="badge badge-sm">{sales[k]} {label}</span>
         ))}
       </span>
-      {offer.kind === 'data' && (
-        <span>While you are signed in here, payments go into your wallet and each buyer gets the key automatically.</span>
-      )}
+      <span>
+        The group pays you the full {sats(offer.price)} in one transaction once every member has pledged, or nothing at all.
+        {offer.kind === 'data' && ' While you are signed in here, the payment goes into your wallet and each buyer then gets the key automatically.'}
+      </span>
     </div>
   );
 }

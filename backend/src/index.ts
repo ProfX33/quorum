@@ -16,9 +16,11 @@ import {
   markClaimed,
   offerData,
   paymentRequest,
+  refundRequest,
   sellerTasks,
   storeData,
-  submitPayment,
+  submitPledge,
+  submitRefund,
 } from "./delivery.ts";
 import {
   createOffer,
@@ -206,7 +208,8 @@ const server = Bun.serve({
       });
     },
 
-    // A winner gets the outputs to pay, then submits the signed transaction (AtomicBEEF hex).
+    // A winner gets what to pledge, then submits the pledge:
+    // { beef (AtomicBEEF hex), vout, unlockingScript (ALL|ANYONECANPAY), keyID }.
     "/api/bids/:id/payment": {
       GET: async (req) => {
         const user = await userFromRequest(req);
@@ -217,18 +220,33 @@ const server = Bun.serve({
         const user = await userFromRequest(req);
         if (!user) return unauthorized();
         if (!isUuid(req.params.id)) return notFound();
-        return reply(await submitPayment(user.id, req.params.id, (await readBody(req)).beef));
+        return reply(await submitPledge(user.id, req.params.id, await readBody(req)));
       },
     },
 
-    // Seller: payments to claim into the wallet and keys to deliver.
+    // A buyer out of the group gets their unused pledges back: GET them, POST the signed refund.
+    "/api/bids/:id/refund": {
+      GET: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        return isUuid(req.params.id) ? reply(await refundRequest(user.id, req.params.id)) : notFound();
+      },
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        return reply(await submitRefund(user.id, req.params.id, (await readBody(req)).beef));
+      },
+    },
+
+    // Seller: group payments to claim into the wallet and keys to deliver.
     "/api/seller/tasks": async (req) => {
       const user = await userFromRequest(req);
       if (!user) return unauthorized();
       return json({ tasks: await sellerTasks(user.id) });
     },
 
-    "/api/bids/:id/claimed": {
+    "/api/offers/:id/claimed": {
       POST: async (req) => {
         const user = await userFromRequest(req);
         if (!user) return unauthorized();

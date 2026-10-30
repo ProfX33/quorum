@@ -1,13 +1,33 @@
-import { Utils } from '@bsv/sdk';
+import {
+  Hash,
+  LockingScript,
+  P2PKH,
+  PrivateKey,
+  ProtoWallet,
+  PublicKey,
+  Signature,
+  Transaction,
+  TransactionSignature,
+  UnlockingScript,
+  Utils,
+} from '@bsv/sdk';
 import { getWallet, request } from './api';
 
 // Data is encrypted in the browser with a random AES-256-GCM key; the server only stores
 // the ciphertext (iv || ciphertext+tag) and the key wrapped by the seller's wallet to itself.
-// After a buyer's payment is seen on the network, the seller's wallet unwraps the key and
-// wraps it again for that buyer (BRC-2, counterparty = buyer). See backend/src/delivery.ts.
+// The payment group pays the seller in one transaction: each buyer pledges their share and
+// signs it for that transaction only (see backend/src/payments.ts). Once the network has
+// seen it, the seller's wallet unwraps the key and wraps it again for each buyer (BRC-2,
+// counterparty = buyer). See backend/src/delivery.ts.
 
 // Must match backend/scripts/delivery-e2e.ts (agents use the same protocol)
 const KEY_PROTOCOL = [2, 'datamarket data key'];
+// Must match backend/src/payments.ts
+const PLEDGE_PROTOCOL = [2, 'datamarket pledge'];
+const BRC29_PROTOCOL = [2, '3241645161d8'];
+const ANYONE_KEY = new PrivateKey(1).toPublicKey().toString();
+const GROUP_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
+const REFUND_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID;
 
 const subtle = () => {
   if (!globalThis.crypto?.subtle) throw new Error('Encryption needs a secure page (https or localhost)');
@@ -26,7 +46,8 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* not persisted */ } },
   del: (k) => { try { localStorage.removeItem(k); } catch { /* nothing stored */ } },
 };
-const pendingPayment = (bidId) => `datamarket:payment:${bidId}`;
+const pendingPayment = (bidId) => `datamarket:pledge:${bidId}`;
+const pendingRefund = (bidId) => `datamarket:refund:${bidId}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,27 +87,81 @@ export async function encryptAndUpload(file, onStep = () => {}) {
   return { dataHash, sellerKeyWrap: hex(wrap) };
 }
 
-// ---------- Buyer: pay ----------
+// ---------- Pledge transactions (same as backend/src/payments.ts) ----------
+
+const anyone = new ProtoWallet('anyone');
+
+/** The BRC-29 key of `identityKey` for one payment, from the public "anyone" sender. */
+async function paymentLockingScript(identityKey, prefix, suffix) {
+  const { publicKey } = await anyone.getPublicKey({
+    protocolID: BRC29_PROTOCOL, keyID: `${prefix} ${suffix}`, counterparty: identityKey,
+  });
+  return new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex();
+}
+
+async function pledgeLockingScript(wallet, keyID) {
+  const { publicKey } = await wallet.getPublicKey({ protocolID: PLEDGE_PROTOCOL, keyID, counterparty: 'self' });
+  return new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex();
+}
+
+function buildTransaction(outputs, inputs) {
+  const tx = new Transaction();
+  for (const i of inputs) tx.addInput({ sourceTransaction: i.tx, sourceOutputIndex: i.vout, sequence: 0xffffffff });
+  for (const o of outputs) tx.addOutput({ lockingScript: LockingScript.fromHex(o.lockingScript), satoshis: o.satoshis });
+  return tx;
+}
+
+/** P2PKH unlocking script for input `index` of `tx`, signed in the wallet by the pledge key `keyID`. */
+async function signWithPledgeKey(wallet, keyID, tx, index, scope) {
+  const input = tx.inputs[index];
+  const source = input.sourceTransaction.outputs[input.sourceOutputIndex];
+  const preimage = TransactionSignature.format({
+    sourceTXID: input.sourceTransaction.id('hex'),
+    sourceOutputIndex: input.sourceOutputIndex,
+    sourceSatoshis: source.satoshis,
+    transactionVersion: tx.version,
+    otherInputs: tx.inputs.filter((_, i) => i !== index),
+    inputIndex: index,
+    outputs: tx.outputs,
+    inputSequence: input.sequence,
+    subscript: source.lockingScript,
+    lockTime: tx.lockTime,
+    scope,
+  });
+  const args = { protocolID: PLEDGE_PROTOCOL, keyID, counterparty: 'self' };
+  // A P2PKH signature is over hash256 of the preimage.
+  const { signature } = await wallet.createSignature({ ...args, hashToDirectlySign: Hash.hash256(preimage) });
+  const { publicKey } = await wallet.getPublicKey(args);
+  const sig = Signature.fromDER(signature);
+  const checksig = new TransactionSignature(sig.r, sig.s, scope).toChecksigFormat();
+  const pubkey = PublicKey.fromString(publicKey).encode(true);
+  return new UnlockingScript([
+    { op: checksig.length, data: checksig },
+    { op: pubkey.length, data: pubkey },
+  ]);
+}
+
+// ---------- Buyer: pledge ----------
 
 /**
- * Submits a signed payment, retrying while the network is unreachable. The signed
- * transaction is kept until the server has recorded it, so a reload never pays twice.
+ * Submits a signed pledge, retrying while the network is unreachable. The pledge is kept
+ * until the server has recorded it, so a reload never pledges twice.
  */
-async function submitPayment(bidId, beef) {
+async function submitPledge(bidId, pledge) {
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await request(`/api/bids/${bidId}/payment`, { beef });
+      const result = await request(`/api/bids/${bidId}/payment`, pledge);
       store.del(pendingPayment(bidId));
       return result;
     } catch (e) {
-      // Only a definite answer about this transaction discards it; anything else is retried.
+      // Only a definite answer about this pledge discards it; anything else is retried.
       // (an expired session, 401, keeps it too: sign in again and it is resubmitted).
       const definite = [400, 404, 409].includes(e.status);
       if (definite) {
         store.del(pendingPayment(bidId));
         throw e;
       }
-      if (attempt >= 3) throw new Error('Your payment is signed but could not be registered yet. It is retried when you open this offer again.');
+      if (attempt >= 3) throw new Error('Your pledge is signed but could not be registered yet. It is retried when you open this offer again.');
       await sleep(2000 * (attempt + 1));
     }
   }
@@ -94,25 +169,95 @@ async function submitPayment(bidId, beef) {
 
 export const hasPendingPayment = (bidId) => store.get(pendingPayment(bidId)) !== null;
 
-/** Resubmits a payment signed earlier whose submission did not get through. */
+/** Resubmits a pledge signed earlier whose submission did not get through. */
 export async function resumePayment(bidId) {
-  const beef = store.get(pendingPayment(bidId));
-  return beef ? submitPayment(bidId, beef) : null;
+  const pledge = store.get(pendingPayment(bidId));
+  return pledge ? submitPledge(bidId, JSON.parse(pledge)) : null;
 }
 
-/** Pays the buyer's share from their wallet, straight to the seller. */
+/**
+ * Pledges the buyer's open share: the wallet moves it to a key of its own, then signs it
+ * for the group payment only. Nothing reaches the seller until the whole group has pledged.
+ */
 export async function payForBid(bidId) {
   if (hasPendingPayment(bidId)) return resumePayment(bidId);
-  const payment = await request(`/api/bids/${bidId}/payment`);
-  const { tx } = await getWallet().createAction({
-    description: payment.description,
-    outputs: payment.outputs,
+  const req = await request(`/api/bids/${bidId}/payment`);
+  // Never sign for a payment that does not give the seller the full price.
+  const [toSeller] = req.groupOutputs;
+  if (toSeller.satoshis !== req.price
+    || toSeller.lockingScript !== (await paymentLockingScript(req.seller, req.derivationPrefix, req.derivationSuffix))) {
+    throw new Error('The group payment the server asked for does not pay the seller the price. Not signing it.');
+  }
+
+  const wallet = getWallet();
+  const lockingScript = await pledgeLockingScript(wallet, req.keyID);
+  const { tx } = await wallet.createAction({
+    description: req.description,
+    outputs: [{ lockingScript, satoshis: req.satoshis, outputDescription: 'Pledge for a group purchase' }],
     labels: ['datamarket'],
   });
   if (!tx) throw new Error('The wallet did not return the signed transaction');
-  const beef = hex(tx);
-  store.set(pendingPayment(bidId), beef);
-  return submitPayment(bidId, beef);
+  const pledgeTx = Transaction.fromAtomicBEEF(tx);
+  const vout = pledgeTx.outputs.findIndex((o) => o.lockingScript.toHex() === lockingScript);
+
+  const group = buildTransaction(req.groupOutputs, [{ tx: pledgeTx, vout }]);
+  const unlockingScript = (await signWithPledgeKey(wallet, req.keyID, group, 0, GROUP_SCOPE)).toHex();
+  const pledge = { beef: hex(tx), vout, unlockingScript, keyID: req.keyID };
+  store.set(pendingPayment(bidId), JSON.stringify(pledge));
+  return submitPledge(bidId, pledge);
+}
+
+// ---------- Buyer: take back unused pledges ----------
+
+export const canRefund = (bid) => bid.refundable > 0 || store.get(pendingRefund(bid.id)) !== null;
+
+const b64 = (s) => Utils.toBase64(Hash.sha256(Utils.toArray(s, 'utf8')).slice(0, 16));
+
+/** Adds a broadcast refund to the wallet's balance (a BRC-29 payment from "anyone" to itself). */
+async function internalizeRefund(id, refund) {
+  await getWallet().internalizeAction({
+    tx: Utils.toArray(refund.beef, 'hex'),
+    outputs: [{
+      outputIndex: 0,
+      protocol: 'wallet payment',
+      paymentRemittance: {
+        derivationPrefix: refund.prefix, derivationSuffix: refund.suffix, senderIdentityKey: ANYONE_KEY,
+      },
+    }],
+    description: 'Data market refund',
+    labels: ['datamarket'],
+  });
+  store.del(pendingRefund(id));
+}
+
+/**
+ * Returns the buyer's unused pledges to their wallet. The wallet signs the refund; the
+ * server only broadcasts it. Resumable: a refund broadcast earlier is just internalized.
+ */
+export async function refundPledges(id) {
+  const pending = store.get(pendingRefund(id));
+  if (pending) return internalizeRefund(id, JSON.parse(pending));
+
+  const r = await request(`/api/bids/${id}/refund`);
+  const wallet = getWallet();
+  const { publicKey: me } = await wallet.getPublicKey({ identityKey: true });
+  const pledges = r.pledges.map((p) => ({ tx: Transaction.fromAtomicBEEF(Utils.toArray(p.beef, 'hex')), vout: p.vout, keyID: p.keyID }));
+  const first = `${r.pledges[0].txid}:${r.pledges[0].vout}`;
+  const prefix = b64(`refund ${id}`);
+  const suffix = b64(first);
+  const total = r.pledges.reduce((sum, p) => sum + p.satoshis, 0);
+  const tx = buildTransaction(
+    [{ lockingScript: await paymentLockingScript(me, prefix, suffix), satoshis: total - r.fee }],
+    pledges,
+  );
+  for (let i = 0; i < pledges.length; i++) {
+    tx.inputs[i].unlockingScript = await signWithPledgeKey(wallet, pledges[i].keyID, tx, i, REFUND_SCOPE);
+  }
+  const refund = { beef: hex(tx.toAtomicBEEF()), prefix, suffix };
+  await request(`/api/bids/${id}/refund`, { beef: refund.beef });
+  // Broadcast: from here on the money is at the wallet's key, it only needs adding to the balance.
+  store.set(pendingRefund(id), JSON.stringify(refund));
+  return internalizeRefund(id, refund);
 }
 
 // ---------- Buyer: download ----------
@@ -161,8 +306,8 @@ const failedAt = new Map(); // `${kind}:${bidId}` → time of the last failure
 const due = (id) => Date.now() - (failedAt.get(id) ?? 0) > RETRY_AFTER_MS;
 
 /**
- * Does the seller's pending work: takes paid shares into the wallet (internalizeAction)
- * and wraps the data key for each buyer whose payment the network has seen.
+ * Does the seller's pending work: takes group payments into the wallet (internalizeAction)
+ * and wraps the data key for each buyer of an offer whose payment the network has seen.
  * `notify(message, kind)` reports progress.
  */
 export async function runSellerTasks(notify = () => {}) {
@@ -170,7 +315,7 @@ export async function runSellerTasks(notify = () => {}) {
   if (tasks.length === 0) return;
   const wallet = getWallet();
   for (const t of tasks) {
-    const claimId = `claim:${t.bidId}`;
+    const claimId = `claim:${t.offerId}`;
     if (t.claim && due(claimId)) {
       try {
         await wallet.internalizeAction({
@@ -187,11 +332,11 @@ export async function runSellerTasks(notify = () => {}) {
           description: 'Data market sale',
           labels: ['datamarket'],
         });
-        await request(`/api/bids/${t.bidId}/claimed`, {});
+        await request(`/api/offers/${t.offerId}/claimed`, {});
         notify(`Received ${t.amount.toLocaleString()} sats for “${t.offerName}”`, 'success');
       } catch (e) {
         if (/already/i.test(e.message)) {
-          await request(`/api/bids/${t.bidId}/claimed`, {}).catch(() => {});
+          await request(`/api/offers/${t.offerId}/claimed`, {}).catch(() => {});
         } else {
           failedAt.set(claimId, Date.now());
           // The money is on-chain at your key either way; this only adds it to the wallet balance.
