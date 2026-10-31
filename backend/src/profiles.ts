@@ -68,7 +68,7 @@ export async function avatar(identityKey: string) {
 /** The public part of a user, or null when nobody has signed in with this key. */
 export async function publicUser(identityKey: string) {
   const [row] = await sql`
-    SELECT id, identity_key, kind, display_name, avatar_updated_at, created_at
+    SELECT id, identity_key, kind, display_name, avatar_updated_at, created_at, reputation
     FROM users WHERE identity_key = ${identityKey}`;
   if (!row) return null;
   return {
@@ -76,6 +76,7 @@ export async function publicUser(identityKey: string) {
     user: {
       ...person(row.identity_key, row.display_name, row.avatar_updated_at),
       kind: row.kind,
+      reputation: Number(row.reputation),
       createdAt: new Date(row.created_at).toISOString(),
     },
   };

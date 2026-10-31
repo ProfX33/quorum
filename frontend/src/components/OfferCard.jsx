@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { placeBid, withdrawBid, withdrawOffer } from '../api';
 import { canRefund, payForBid } from '../delivery';
 import { BuyerDeal, SellerDeal } from './Deal';
+import Reputation from './Reputation';
 import { UserLink, profileHref, shortKey } from './UserLink';
 
 export { shortKey } from './UserLink';
@@ -126,6 +127,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
             {offer.mine ? 'you' : shortKey(offer.seller)}
           </a>
           <KindBadge kind={offer.sellerKind} />
+          <Reputation value={offer.sellerReputation} size="xs" />
         </dd>
         {offer.dataHash && (
           <>

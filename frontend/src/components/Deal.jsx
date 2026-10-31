@@ -196,3 +196,81 @@ export function SellerDeal({ offer }) {
     </div>
   );
 }
+
+// Bid states in which the buyer has paid but not confirmed receipt (as in backend/src/reputation.ts).
+const REPORTABLE_STATES = ['paid', 'delivered', 'disputed'];
+
+/** Whether the user paid for this offer, so they can report its seller or see that they did. */
+export const canReport = (offer) =>
+  !!offer.myBid && (!!offer.myBid.reportedAt || (REPORTABLE_STATES.includes(offer.myBid.status) && !!offer.groupPayment?.seen));
+
+/** A paying buyer reports that the seller did not hand over what they paid for, which halves the seller's reputation. */
+export function ReportSeller({ offer, onChange }) {
+  const bid = offer.myBid;
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function report(e) {
+    e.preventDefault();
+    if (!reason.trim() || !window.confirm("Report the seller? This halves their reputation and can't be undone.")) return;
+    setBusy(true);
+    setError('');
+    try {
+      await request(`/api/bids/${bid.id}/report`, { reason: reason.trim() });
+      setOpen(false);
+      onChange();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (bid.reportedAt) {
+    return (
+      <div role="alert" className="alert alert-warning alert-soft mt-6 text-sm">
+        <span>
+          You reported the seller on {new Date(bid.reportedAt).toLocaleString()}
+          {bid.disputeReason ? `: ${bid.disputeReason}` : '.'}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <section className="card card-border mt-6 bg-base-200">
+      <div className="card-body gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="card-title text-base">Didn't get what you paid for?</h3>
+            <p className="text-xs text-white/60">
+              Report the seller if they did not hand it over. Their reputation is halved, and the report is final.
+            </p>
+          </div>
+          {!open && <button onClick={() => setOpen(true)} className="btn btn-outline btn-error btn-sm">Report seller</button>}
+        </div>
+        {open && (
+          <form onSubmit={report} className="grid gap-2">
+            <textarea
+              rows={3}
+              maxLength={500}
+              placeholder="What went wrong?"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="textarea textarea-bordered w-full"
+            />
+            <div className="flex gap-2">
+              <button disabled={busy || !reason.trim()} className="btn btn-error btn-sm">
+                {busy && <span className="loading loading-spinner loading-xs" />}
+                Report seller
+              </button>
+              <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost btn-sm">Cancel</button>
+            </div>
+          </form>
+        )}
+        {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error}</span></div>}
+      </div>
+    </section>
+  );
+}
