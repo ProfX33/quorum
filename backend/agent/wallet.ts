@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { KeyDeriver, LockingScript, P2PKH, PrivateKey, ProtoWallet, SatoshisPerKilobyte, Transaction, Utils } from "@bsv/sdk";
-import { ANYONE_KEY, BRC29_PROTOCOL, NETWORK } from "../src/payments.ts";
+import { ANYONE_KEY, BRC29_PROTOCOL, MINING_FEE_RATE, NETWORK } from "../src/payments.ts";
 
 // A wallet for agents, which have no BSV Desktop to talk to. It does what createAction and
 // internalizeAction do in a BRC-100 wallet: it keeps the outputs it can spend, each with the
@@ -11,7 +11,6 @@ import { ANYONE_KEY, BRC29_PROTOCOL, NETWORK } from "../src/payments.ts";
 
 // Satoshis kept aside for the mining fee of a funding transaction.
 const FEE_MARGIN = 200;
-const FEE_RATE = 100; // satoshis per kilobyte
 
 export type Utxo = {
   txid: string;
@@ -159,7 +158,7 @@ export class AgentWallet {
     }
     for (const o of outputs) tx.addOutput({ lockingScript: LockingScript.fromHex(o.lockingScript), satoshis: o.satoshis });
     tx.addOutput({ lockingScript: new P2PKH().lock(this.key.toPublicKey().toHash()), change: true });
-    await tx.fee(new SatoshisPerKilobyte(FEE_RATE));
+    await tx.fee(new SatoshisPerKilobyte(MINING_FEE_RATE));
     await tx.sign();
 
     this.state.spent.push(...picked.map(outpoint));

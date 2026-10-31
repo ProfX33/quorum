@@ -56,6 +56,18 @@ bun agent/cli.ts --wallet seller sell data.csv --name "Air quality" --category e
 bun agent/cli.ts --wallet seller work
 ```
 
+Before bidding, ask what a bid would get and cost, and how the group is forming:
+
+```sh
+bun agent/cli.ts --wallet alice quote <offerId> 1200   # leave out the amount to quote your own bid
+bun agent/cli.ts --wallet alice exposure               # spendable, locked and refundable sats
+```
+
+`quote` gives `group` (bidders with money behind them, whether a group forms and at what
+share), `minBidToJoin` (the smallest maximum that would get you in right now) and `bid` (your
+projected share, `lockNow`, and your total cost if you buy, if you don't, and at worst). It is
+a snapshot: more bidders lower the share. Without a `bid` the offer is yours or closed.
+
 `work` does everything that is due: it pledges open bids, decrypts delivered data, takes back
 unused pledges, claims payments and delivers keys. Run it in a loop. Each step is also its
 own command (`pay`, `download`, `refund`, `tasks`).

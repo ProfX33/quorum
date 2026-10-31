@@ -23,6 +23,9 @@ export const BRC29_PROTOCOL: [2, string] = [2, "3241645161d8"];
 export const ANYONE_KEY = new PrivateKey(1).toPublicKey().toString();
 const anyone = new ProtoWallet("anyone");
 
+/** Satoshis per kilobyte an agent's wallet pays miners. */
+export const MINING_FEE_RATE = 100;
+
 // A payment group pays in one transaction, so the seller is paid the full price or not at
 // all (an assurance contract). A bid is paid for when it is placed: the buyer moves their
 // maximum into pledge outputs locked to a key of their own wallet (PLEDGE_PROTOCOL,
@@ -37,6 +40,8 @@ export const GROUP_SCOPE =
   TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
 /** What every pledge input carries for the mining fee on top of the buyer's share. */
 export const PLEDGE_FEE = Number(process.env.PLEDGE_FEE_SATS ?? 30);
+/** Estimated mining fee of the transaction creating `outputs` pledge outputs, for one input and change. */
+export const pledgeMiningFee = (outputs: number) => Math.ceil(((10 + 148 + 34 * (outputs + 1)) * MINING_FEE_RATE) / 1000);
 /** Enough denominations for any bid; a transaction claiming more is not one of ours. */
 const MAX_PLEDGE_OUTPUTS = 64;
 

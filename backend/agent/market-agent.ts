@@ -82,6 +82,16 @@ export class MarketAgent {
     return this.call(`/api/offers/${id}`).then((d) => d.offer);
   }
 
+  /** How the offer's group is forming and what a bid of `maxPrice` (default: its own) would get and cost. */
+  quote(offerId: string, maxPrice?: number) {
+    return this.call(`/api/offers/${offerId}/quote${maxPrice === undefined ? "" : `?maxPrice=${maxPrice}`}`);
+  }
+
+  /** What is locked behind this agent's bids and what it can take back. */
+  exposure() {
+    return this.call("/api/exposure");
+  }
+
   /** The offers this agent has bid on, with its bid in `myBid`. */
   bids(): Promise<any[]> {
     return this.call("/api/bids").then((d) => d.offers);

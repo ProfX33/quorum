@@ -31,6 +31,8 @@ import {
   listOffers,
   listRequests,
   placeBid,
+  pledgeExposure,
+  quoteOffer,
   settleDue,
   withdrawBid,
   withdrawOffer,
@@ -258,6 +260,20 @@ const server = Bun.serve({
         const ok = isUuid(req.params.id) && (await withdrawOffer(user.id, req.params.id));
         return ok ? json({ ok }) : json({ error: "No open offer of yours to withdraw" }, { status: 404 });
       },
+    },
+
+    // How the group is forming and, with ?maxPrice= or the caller's own bid, what that bid would get.
+    "/api/offers/:id/quote": async (req) => {
+      if (!isUuid(req.params.id)) return notFound();
+      const user = await userFromRequest(req);
+      return reply(await quoteOffer(req.params.id, user?.id ?? null, new URL(req.url).searchParams.get("maxPrice")));
+    },
+
+    // What the caller's pledges hold: locked behind bids, and refundable now.
+    "/api/exposure": async (req) => {
+      const user = await userFromRequest(req);
+      if (!user) return unauthorized();
+      return json(await pledgeExposure(user.id));
     },
 
     // The offers the caller has bid on, whatever their state: how an agent follows its bids.

@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { denominations, findPaymentGroup, isComplete, pickDenominations, shareOut } from "./settlement.ts";
+import {
+  denominations,
+  findPaymentGroup,
+  isComplete,
+  pickDenominations,
+  projectBid,
+  shareOut,
+  smallestJoiningBid,
+} from "./settlement.ts";
 
 const bids = (...maxima: number[]) => maxima.map((maxPrice, i) => ({ id: `b${i}`, maxPrice }));
 
@@ -42,6 +50,40 @@ describe("findPaymentGroup", () => {
       { id: "b0", amount: 3 },
       { id: "b2", amount: 3 },
     ]);
+  });
+});
+
+describe("projectBid", () => {
+  test("a bid that completes the group", () => {
+    expect(projectBid(700, [400], 400)).toEqual({ groupSize: 2, inGroup: true, share: 350 });
+  });
+
+  test("a bid too small to complete the group", () => {
+    expect(projectBid(700, [400], 300)).toEqual({ groupSize: 0, inGroup: false, share: null });
+  });
+
+  test("a bid too small for a group that forms without it", () => {
+    expect(projectBid(100, [60, 50], 10)).toEqual({ groupSize: 2, inGroup: false, share: 50 });
+  });
+
+  test("the share is never below what the bidder could pay after rounding", () => {
+    expect(projectBid(10, [4, 3], 3).share).toBe(4);
+  });
+});
+
+describe("smallestJoiningBid", () => {
+  test("the bid completing the group", () => {
+    expect(smallestJoiningBid(700, [400])).toBe(350);
+    expect(smallestJoiningBid(700, [])).toBe(700);
+  });
+
+  test("is exact for any field of bidders", () => {
+    for (const others of [[], [1], [30], [30, 30], [10, 60, 50], [100], [34, 33, 33], [5, 5, 5, 5, 90]]) {
+      const min = smallestJoiningBid(100, others);
+      expect(projectBid(100, others, min).inGroup).toBe(true);
+      if (min > 1) expect(projectBid(100, others, min - 1).inGroup).toBe(false);
+      for (let bid = min; bid <= 100; bid++) expect(projectBid(100, others, bid).inGroup).toBe(true);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import { sql } from "./db.ts";
-import { PLEDGE_FEE, derivationNonce, txUrl } from "./payments.ts";
+import { PLEDGE_FEE, derivationNonce, pledgeMiningFee, txUrl } from "./payments.ts";
 import { person } from "./profiles.ts";
-import { type Bid, findPaymentGroup } from "./settlement.ts";
+import { type Bid, denominations, findPaymentGroup, projectBid, smallestJoiningBid } from "./settlement.ts";
 
 export const KINDS = ["data", "service", "product"] as const;
 type Kind = (typeof KINDS)[number];
@@ -175,6 +175,87 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
   return rows.map((row: any) => toOffer(row, userId));
 }
 
+/**
+ * How the group of an offer is forming, and, for `maxPriceParam` or else the caller's own
+ * maximum, what that bid would get if bidding closed now and what it would cost in fees.
+ * Maxima stay private, but funded amounts do not: pledges are public on-chain anyway.
+ */
+export async function quoteOffer(offerId: string, userId: string | null, maxPriceParam: string | null) {
+  const maxPrice = maxPriceParam === null ? null : Number(maxPriceParam);
+  if (maxPrice !== null && !isSats(maxPrice)) return { error: "maxPrice must be a positive integer (satoshis)", status: 400 };
+  const [offer] = await sql`
+    SELECT id, seller_id, status, price, deadline, deadline > now() AS running FROM sell_offers WHERE id = ${offerId}`;
+  if (!offer) return { error: "Not found", status: 404 };
+  const price = Number(offer.price);
+  const open = offer.status === "open" && offer.running;
+
+  const rows = await sql`
+    SELECT b.buyer_id, b.max_price,
+      COALESCE(sum(p.satoshis - ${PLEDGE_FEE}), 0) AS credited, count(p.id)::int AS outputs
+    FROM buy_offers b LEFT JOIN pledges p ON p.bid_id = b.id AND p.status = 'active'
+    WHERE b.sell_offer_id = ${offerId} AND b.status = 'open'
+    GROUP BY b.id`;
+  const bids = (rows as any[]).map((b) => ({
+    buyerId: b.buyer_id as string,
+    maxPrice: Number(b.max_price),
+    credited: Number(b.credited),
+    outputs: b.outputs as number,
+    funded: Math.min(Number(b.max_price), Number(b.credited)),
+  }));
+  const funded = bids.filter((b) => b.funded > 0);
+  const mine = bids.find((b) => b.buyerId === userId);
+  const others = funded.filter((b) => b !== mine).map((b) => b.funded);
+  const group = findPaymentGroup(price, funded.map((b, i) => ({ id: String(i), maxPrice: b.funded })));
+
+  const quote = {
+    offerId,
+    status: offer.status as string,
+    price,
+    deadline: new Date(offer.deadline).toISOString(),
+    secondsLeft: open ? Math.ceil((new Date(offer.deadline).getTime() - Date.now()) / 1000) : 0,
+    biddingOpen: open,
+    // Only while bidding runs; the group of a settled offer is in its groupPayment.
+    group: open
+      ? {
+          fundedBidders: funded.length,
+          unfundedBidders: bids.length - funded.length,
+          fundedTotal: funded.reduce((sum, b) => sum + b.funded, 0),
+          forms: group !== null,
+          size: group?.length ?? 0,
+          share: group?.[0]!.amount ?? null,
+        }
+      : null,
+    // The smallest maximum that would put the caller in the group right now.
+    minBidToJoin: open ? smallestJoiningBid(price, others) : null,
+  };
+
+  const candidate = maxPrice ?? mine?.maxPrice ?? null;
+  if (!open || candidate === null || offer.seller_id === userId) return { ...quote, bid: null };
+  const credited = mine?.credited ?? 0;
+  const due = Math.max(0, candidate - credited);
+  const newOutputs = due > 0 ? denominations(due).length : 0;
+  const miningFee = newOutputs > 0 ? pledgeMiningFee(newOutputs) : 0;
+  // Every output costs its fee contribution whether it pays the share or comes back in a refund.
+  const fees = ((mine?.outputs ?? 0) + newOutputs) * PLEDGE_FEE + miningFee;
+  const outcome = projectBid(price, others, candidate);
+  return {
+    ...quote,
+    bid: {
+      maxPrice: candidate,
+      ...outcome,
+      share: outcome.inGroup ? outcome.share : null,
+      // What leaves the wallet if this bid is placed now.
+      lockNow: due + newOutputs * PLEDGE_FEE + miningFee,
+      alreadyPledged: credited,
+      fees,
+      // Shares can rise up to the maximum if a member of the group drops out.
+      costAtShare: outcome.inGroup ? outcome.share! + fees : null,
+      costIfNotBought: fees,
+      maxCost: candidate + fees,
+    },
+  };
+}
+
 export async function createOffer(sellerId: string, body: Record<string, unknown>) {
   const listing = parseListing(body);
   if (typeof listing === "string") return { error: listing };
@@ -278,6 +359,42 @@ export async function withdrawOffer(sellerId: string, offerId: string) {
     }
     return true;
   });
+}
+
+/**
+ * What the user's pledges hold: `locked` still backs an open or settling bid, `refundable`
+ * can be taken back now. Both include the fee contributions; `refundFee` goes to the miners.
+ */
+export async function pledgeExposure(userId: string) {
+  const rows = await sql`
+    SELECT b.id, b.status, b.max_price, s.id AS offer_id, s.name, s.deadline,
+      sum(p.satoshis) AS satoshis, count(*)::int AS outputs
+    FROM pledges p
+    JOIN buy_offers b ON b.id = p.bid_id
+    JOIN sell_offers s ON s.id = b.sell_offer_id
+    WHERE b.buyer_id = ${userId} AND p.status = 'active'
+    GROUP BY b.id, s.id
+    ORDER BY s.deadline`;
+  const bids = (rows as any[]).map((r) => {
+    const held = ["open", "won", "pledged"].includes(r.status);
+    return {
+      bidId: r.id as string,
+      offerId: r.offer_id as string,
+      offerName: r.name as string,
+      status: r.status as string,
+      maxPrice: Number(r.max_price),
+      deadline: new Date(r.deadline).toISOString(),
+      locked: held ? Number(r.satoshis) : 0,
+      refundable: held ? 0 : Number(r.satoshis),
+      refundFee: held ? 0 : r.outputs * PLEDGE_FEE,
+    };
+  });
+  return {
+    locked: bids.reduce((sum, b) => sum + b.locked, 0),
+    refundable: bids.reduce((sum, b) => sum + b.refundable, 0),
+    refundFee: bids.reduce((sum, b) => sum + b.refundFee, 0),
+    bids,
+  };
 }
 
 // ---------- Requests (buy offers without a sell offer) ----------

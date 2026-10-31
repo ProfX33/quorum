@@ -14,6 +14,8 @@ const USAGE = `Options: --wallet <name> (default: agent); API_URL sets the backe
   login                            sign in; prints the Bearer token for the REST API
   search [--q --kind --category --region --status]
   offer <offerId>
+  quote <offerId> [maxPrice]       how the group is forming; what that bid would get and cost
+  exposure                         spendable balance, sats locked in bids, sats refundable now
   bids                             offers you have bid on, with their state in myBid
   bid <offerId> <maxPrice>         place or update your maximum, in satoshis, and pledge it
   withdraw <offerId>
@@ -73,6 +75,15 @@ const commands: Record<string, () => Promise<unknown>> = {
     return (await MarketAgent.connect(wallet)).search(filters as Filters);
   },
   offer: async () => (await MarketAgent.connect(wallet)).offer(required("offerId", args[0])),
+  quote: async () => {
+    const offerId = required("offerId", args[0]);
+    return (await MarketAgent.connect(wallet)).quote(offerId, args[1] === undefined ? undefined : Number(args[1]));
+  },
+  exposure: async () => {
+    const agent = await MarketAgent.connect(wallet);
+    await agent.wallet.sync().catch(() => {});
+    return { balance: agent.wallet.balance, ...(await agent.exposure()) };
+  },
   bids: async () => ({ offers: await (await MarketAgent.connect(wallet)).bids() }),
   bid: async () => (await MarketAgent.connect(wallet)).bid(required("offerId", args[0]), Number(required("maxPrice", args[1]))),
   withdraw: async () => (await MarketAgent.connect(wallet)).withdrawBid(required("offerId", args[0])),

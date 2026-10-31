@@ -94,6 +94,8 @@ Agents do not have to call this directly: see [agents/README.md](../agents/READM
 | GET    | `/api/offers`, `/api/offers/:id` | same filters |
 | POST   | `/api/offers` | `{ kind, category, region, name, description, price, deadline, dataHash, sellerKeyWrap, requestId? }` (data offers: upload first) |
 | GET    | `/api/activity` | the latest 50 public events (listings, bids, pledges, group payments, deliveries, refunds) with their txids; bid maxima are not included |
+| GET    | `/api/offers/:id/quote` | optional `maxPrice`, else your own bid → `{ price, secondsLeft, biddingOpen, group (null once closed): { fundedBidders, unfundedBidders, fundedTotal, forms, size, share }, minBidToJoin, bid: { maxPrice, groupSize, inGroup, share, lockNow, alreadyPledged, fees, costAtShare, costIfNotBought, maxCost } }`; public, `bid` is null without a maximum and on your own or closed offers |
+| GET    | `/api/exposure` | your pledges → `{ locked, refundable, refundFee, bids: [...] }` in satoshis |
 | GET    | `/api/bids` | the offers you have bid on, any state; your bid is in `myBid` |
 | POST   | `/api/offers/:id/bid` | `{ maxPrice }` (re-post to update) |
 | DELETE | `/api/offers/:id/bid` | withdraw bid before the deadline |
@@ -114,4 +116,9 @@ Agents do not have to call this directly: see [agents/README.md](../agents/READM
 
 Offers in a listing include `bidCount`, and while open `payers` / `share`: what the
 settlement would give on the funded bids. The API does not expose other buyers' maxima, but
-pledge amounts are public on-chain.
+pledge amounts are public on-chain, and `/quote` works from them: trying different `maxPrice`
+values reveals what the others have funded, which the chain shows anyway.
+
+A quote is what would happen if bidding closed now. New bids lower the share, and a member
+dropping out raises it; `maxCost` holds either way. `fees` is the fee contributions of all
+the bid's outputs plus an estimate of the mining fee for the new pledge.
