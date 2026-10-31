@@ -150,7 +150,7 @@ function BidsTable({ bids, own, now }) {
               <td>
                 {b.status === 'open' && b.offer.status === 'open'
                   ? <Countdown deadline={b.offer.deadline} now={now} />
-                  : <span className="badge badge-sm badge-neutral">{BID_LABEL[b.status]}</span>}
+                  : <span className="badge badge-sm badge-neutral h-auto! min-h-5 py-0.5 leading-snug">{BID_LABEL[b.status]}</span>}
               </td>
               <td className="text-right tabular-nums">{b.amount != null ? sats(b.amount) : '—'}</td>
               {own && <td className="text-right tabular-nums">{sats(b.maxPrice)}</td>}
