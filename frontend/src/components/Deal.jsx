@@ -54,9 +54,25 @@ export function BuyerDeal({ offer, now, onChange }) {
   const refundButton = canRefund(bid) && (
     <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => refundPledges(bid.id))} className="btn btn-primary btn-sm">
       {spinner}
-      {busy || (bid.refundable > 0 ? `Take back ${sats(bid.refundable)}` : 'Finish taking back your pledge')}
+      {busy || (bid.refundable > 0 ? `Take back ${sats(bid.refundable - bid.refundFee)}` : 'Finish taking back your pledge')}
     </button>
   );
+  const downloadButton = (
+    <button
+      disabled={!!busy}
+      onClick={async () => {
+        const failed = await run('Decrypting…', () => downloadPurchase(bid.id, offer.file?.name));
+        // The wallet refusing to unwrap may be a denied prompt; the buyer decides whether to ask again.
+        setCanAskAgain(!!failed && bid.status === 'delivered' && !/seller has been asked/.test(failed.message));
+      }}
+      className="btn btn-primary btn-sm"
+    >
+      {spinner}
+      {busy || (bid.status === 'delivered' ? 'Download & decrypt' : 'Download again')}
+    </button>
+  );
+  // The payment went through: what the share did not need comes back.
+  const leftover = (bid.paymentSeen && bid.status !== 'defaulted') && canRefund(bid);
   let body;
   if (bid.status === 'open') {
     const due = bid.maxPrice - bid.pledged;
@@ -123,20 +139,23 @@ export function BuyerDeal({ offer, now, onChange }) {
     body = (
       <>
         <span>
-          {bid.status === 'received' ? 'Received.' : 'The key has been delivered.'} <TxLink bid={bid} />
+          {bid.status === 'received'
+            ? 'Received.'
+            : 'The key has been delivered. Check the data, then confirm it is what you paid for, or report the seller below.'}{' '}
+          <TxLink bid={bid} />
         </span>
-        {offer.kind === 'data' && (
+        {offer.kind === 'data' && downloadButton}
+        {bid.status === 'delivered' && (
           <button
             disabled={!!busy}
-            onClick={async () => {
-              const failed = await run('Decrypting…', () => downloadPurchase(bid.id, offer.file?.name));
-              // The wallet refusing to unwrap may be a denied prompt; the buyer decides whether to ask again.
-              setCanAskAgain(!!failed && bid.status === 'delivered' && !/seller has been asked/.test(failed.message));
+            onClick={() => {
+              if (window.confirm("Confirm this is what you paid for? You can't report the seller afterwards.")) {
+                run('Confirming…', () => request(`/api/bids/${bid.id}/receipt`, { ok: true }));
+              }
             }}
-            className="btn btn-primary btn-sm"
+            className="btn btn-outline btn-sm"
           >
-            {spinner}
-            {busy || (bid.status === 'received' ? 'Download again' : 'Download & decrypt')}
+            Confirm receipt
           </button>
         )}
         {canAskAgain && (
@@ -151,7 +170,16 @@ export function BuyerDeal({ offer, now, onChange }) {
       </>
     );
   } else if (bid.status === 'disputed') {
-    body = <span>Delivery failed and is disputed{bid.disputeReason ? `: ${bid.disputeReason}` : '.'}</span>;
+    body = (
+      <>
+        <span>
+          {bid.reportedAt ? 'You reported this sale' : 'Delivery failed and is disputed'}
+          {bid.disputeReason ? `: ${bid.disputeReason}` : '.'}
+          {offer.kind === 'data' && !bid.hasKey && ' The seller can still deliver the key.'}
+        </span>
+        {offer.kind === 'data' && bid.hasKey && downloadButton}
+      </>
+    );
   } else {
     return null;
   }
@@ -160,6 +188,14 @@ export function BuyerDeal({ offer, now, onChange }) {
   return (
     <div className="grid gap-2">
       <div role="alert" className={`alert alert-soft text-sm ${tone} flex flex-wrap`}>{body}</div>
+      {leftover && (
+        <div role="alert" className="alert alert-soft alert-info flex flex-wrap text-sm">
+          <span>
+            You paid {sats(bid.amount)}. The rest of your pledge goes back to your wallet by itself while you are signed in, less the network fee.
+          </span>
+          {refundButton}
+        </div>
+      )}
       {bid.paymentError && bid.status === 'pledged' && (
         <div role="alert" className="alert alert-error alert-soft text-sm">
           <span>{bid.paymentError}. The group is paying again without the members whose pledge was spent.</span>
@@ -204,7 +240,7 @@ const REPORTABLE_STATES = ['paid', 'delivered', 'disputed'];
 export const canReport = (offer) =>
   !!offer.myBid && (!!offer.myBid.reportedAt || (REPORTABLE_STATES.includes(offer.myBid.status) && !!offer.groupPayment?.seen));
 
-/** A paying buyer reports that the seller did not hand over what they paid for, which halves the seller's reputation. */
+/** A paying buyer reports that the seller did not hand over what was described, which halves the seller's reputation. */
 export function ReportSeller({ offer, onChange }) {
   const bid = offer.myBid;
   const [open, setOpen] = useState(false);
@@ -228,6 +264,14 @@ export function ReportSeller({ offer, onChange }) {
     }
   }
 
+  const reportFrom = bid.reportFrom && new Date(bid.reportFrom);
+  if (reportFrom && reportFrom > new Date()) {
+    return (
+      <div role="alert" className="alert alert-soft alert-info mt-6 text-sm">
+        <span>The seller may just be offline. If the key has not arrived by {reportFrom.toLocaleString()}, you can report them here.</span>
+      </div>
+    );
+  }
   if (bid.reportedAt) {
     return (
       <div role="alert" className="alert alert-warning alert-soft mt-6 text-sm">
@@ -245,7 +289,9 @@ export function ReportSeller({ offer, onChange }) {
           <div>
             <h3 className="card-title text-base">Didn't get what you paid for?</h3>
             <p className="text-xs text-white/60">
-              Report the seller if they did not hand it over. Their reputation is halved, and the report is final.
+              {offer.kind === 'data'
+                ? "Report the seller if the data never arrived or isn't what they described. Their reputation is halved, and the report is final."
+                : 'Report the seller if they did not hand it over. Their reputation is halved, and the report is final.'}
             </p>
           </div>
           {!open && <button onClick={() => setOpen(true)} className="btn btn-outline btn-error btn-sm">Report seller</button>}

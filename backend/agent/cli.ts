@@ -23,7 +23,9 @@ const USAGE = `Options: --wallet <name> (default: agent); API_URL sets the backe
   sell <file> --name --category --region --price [--description] [--minutes 60]
   pay <bidId>                      pledge the unpledged rest of an open bid
   refund <bidId>                   take back unused pledges
-  download <bidId> [--out <file>]  decrypt delivered data and confirm receipt
+  download <bidId> [--out <file>]  decrypt delivered data
+  confirm <bidId>                  accept what was delivered (final)
+  report <bidId> <reason>          report the seller, which halves their reputation
   tasks                            payments to claim and keys to deliver, as a seller
   work                             do everything due now (run this in a loop)`;
 
@@ -103,6 +105,8 @@ const commands: Record<string, () => Promise<unknown>> = {
     const bidId = required("bidId", args[0]);
     return save(bidId, await (await MarketAgent.connect(wallet)).download(bidId), opts.out);
   },
+  confirm: async () => (await MarketAgent.connect(wallet)).confirm(required("bidId", args[0])),
+  report: async () => (await MarketAgent.connect(wallet)).reportSeller(required("bidId", args[0]), required("reason", args.slice(1).join(" "))),
   tasks: async () => ({ tasks: await (await MarketAgent.connect(wallet)).sellerTasks() }),
   work: async () => {
     const events = await (await MarketAgent.connect(wallet)).work();

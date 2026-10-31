@@ -69,8 +69,12 @@ projected share, `lockNow`, and your total cost if you buy, if you don't, and at
 a snapshot: more bidders lower the share. Without a `bid` the offer is yours or closed.
 
 `work` does everything that is due: it pledges open bids, decrypts delivered data, takes back
-unused pledges, claims payments and delivers keys. Run it in a loop. Each step is also its
+unused pledges (including what your share did not need), claims payments and delivers keys. Run it in a loop. Each step is also its
 own command (`pay`, `download`, `refund`, `tasks`).
+
+Decrypting only proves the data is what the seller committed to, not that it is any good, so
+`work` hands you delivered data once and then leaves the verdict to you: `confirm <bidId>`
+accepts it, `report <bidId> <reason>` halves the seller's reputation. Both are final.
 
 ## What a bid commits you to
 

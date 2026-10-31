@@ -5,8 +5,12 @@ import { sql } from "./db.ts";
 // not hand it over halves it, rounded down. Each offer counts once either way, so several
 // buyers of one offer neither multiply the reward nor the penalty, and a reported offer earns
 // nothing afterwards.
+// Decrypting data only proves it is what the seller committed to, not that it is any good, so
+// a data buyer can report after downloading, until they confirm receipt. A seller who has not
+// delivered the key gets a grace period first, as they may just be offline.
 export const MAX_REPUTATION = 10;
 const MAX_REASON_LENGTH = 500;
+export const DELIVERY_GRACE_MS = Number(process.env.DELIVERY_GRACE_HOURS ?? 24) * 3_600_000;
 
 // Bid states in which the buyer has paid but not confirmed receipt, so they can report.
 const REPORTABLE_STATES = ["paid", "delivered", "disputed"];
@@ -36,7 +40,7 @@ export async function reportSeller(buyerId: string, bidId: string, reason: unkno
   if (!why) return fail(400, "Say what went wrong");
   return sql.begin(async (tx) => {
     const [bid] = await tx`
-      SELECT b.buyer_id, b.status, b.reported_at, b.sell_offer_id, s.seller_id, s.payment_seen_at, s.reported_at AS offer_reported_at
+      SELECT b.buyer_id, b.status, b.reported_at, b.sell_offer_id, s.kind, s.seller_id, s.payment_seen_at, s.reported_at AS offer_reported_at
       FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id
       WHERE b.id = ${bidId}
       FOR UPDATE OF b, s`;
@@ -44,6 +48,10 @@ export async function reportSeller(buyerId: string, bidId: string, reason: unkno
     if (bid.reported_at) return fail(409, "You have already reported this seller for this offer");
     if (!REPORTABLE_STATES.includes(bid.status) || !bid.payment_seen_at) {
       return fail(409, "Only a buyer who paid and has not confirmed receipt can report the seller");
+    }
+    const deliverBy = new Date(new Date(bid.payment_seen_at).getTime() + DELIVERY_GRACE_MS);
+    if (bid.kind === "data" && bid.status === "paid" && new Date() < deliverBy) {
+      return fail(409, `The seller has until ${deliverBy.toISOString()} to deliver the key`);
     }
     await tx`
       UPDATE buy_offers SET status = 'disputed', dispute_reason = ${why}, reported_at = now()

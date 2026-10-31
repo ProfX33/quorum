@@ -165,6 +165,8 @@ async function report(who: "alice" | "bob", agent: MarketAgent, offerId: string,
   const csv = new TextDecoder().decode(e.data);
   say(who, `decrypted ${e.data!.length} bytes, it matches the hash the seller committed to before bidding`);
   say(who, `result: ${act(parse(csv))}`);
+  await agent.confirm(e.bidId!);
+  say(who, `the data is usable, so I confirm receipt and the seller earns reputation`);
   const { myBid } = await agent.offer(offerId);
   return { csv, paid: myBid.amount as number };
 }

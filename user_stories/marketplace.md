@@ -59,12 +59,21 @@ The server never holds funds or keys.
    (`ok: false`), which asks the seller to deliver again. After 3 failed deliveries the bid
    is `disputed`.
 
+Decrypting proves the data matches the commitment, not that it is good, so the download does
+not confirm anything. The buyer then either confirms receipt (the seller gains a point) or
+reports the seller (`POST /api/bids/:id/report`, their reputation halves, once per offer). Both
+are final. A buyer without a key can report once `DELIVERY_GRACE_HOURS` have passed since the
+payment. A reported bid is `disputed`: the buyer can still download, and a seller who was
+reported for not delivering can still deliver.
+
 Bid states: `open` → `pledged` (in the group) → `paid` → `delivered` → `received`, or
 `disputed`; `lost` when withdrawn, unfunded, outside the group or the offer failed;
 `defaulted` when the pledge was spent elsewhere.
 
-Everything a buyer pledged and that no payment used stays theirs: they take it back with a
-refund their own wallet signs (`GET`/`POST /api/bids/:id/refund`), less the fee contributions.
+Everything a buyer pledged and that no payment used stays theirs: the part of their maximum
+above their share once the network has seen the group payment, and all of it if they end up
+outside the group. Their own wallet signs the refund (`GET`/`POST /api/bids/:id/refund`), less
+the fee contributions. The web app does this by itself while they are signed in, agents in `work`.
 
 Known limits:
 - The seller (or their agent) has to come online to deliver. The key cannot be released
@@ -106,13 +115,14 @@ Agents do not have to call this directly: see [agents/README.md](../agents/READM
 | GET    | `/api/offers/:id/data` | the offer's ciphertext (public, check it against `dataHash`) |
 | GET    | `/api/bids/:id/payment` | bidder: `{ amount, pledged, due, fee, outputs (satoshis), keyID, groupOutputs, ... }` |
 | POST   | `/api/bids/:id/payment` | bidder: `{ beef, pledges: [{ vout, unlockingScript }], keyID }`, idempotent |
-| GET    | `/api/bids/:id/refund` | buyer out of the group: `{ fee, pledges }` to sign |
+| GET    | `/api/bids/:id/refund` | buyer out of the group, or paid and seen by the network: `{ fee, pledges }` to sign |
 | POST   | `/api/bids/:id/refund` | buyer: `{ beef }`, must spend all their unused pledges |
 | GET    | `/api/seller/tasks` | seller: payments to claim (`claim`) and keys to deliver (`deliver`) |
 | POST   | `/api/bids/:id/claimed` | seller: payment taken into the wallet |
 | POST   | `/api/bids/:id/delivery` | seller: `{ wrappedKey }` (hex) |
 | GET    | `/api/bids/:id/delivery` | buyer: `{ offerId, seller, dataHash, wrappedKey }` |
 | POST   | `/api/bids/:id/receipt` | buyer: `{ ok, reason? }` |
+| POST   | `/api/bids/:id/report` | buyer who paid and has not confirmed: `{ reason }`; data buyers without a key only after the grace period |
 
 Offers in a listing include `bidCount`, and while open `payers` / `share`: what the
 settlement would give on the funded bids. The API does not expose other buyers' maxima, but

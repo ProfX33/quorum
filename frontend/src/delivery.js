@@ -52,6 +52,21 @@ const pendingRefund = (bidId) => `datamarket:refund:${bidId}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const WALLET_DESCRIPTION_BYTES = 50;
+
+/** How an action is listed in the wallet, e.g. "Pledge: Air quality". Wallets refuse over 50 bytes. */
+export function walletDescription(action, offerName) {
+  const encoder = new TextEncoder();
+  const full = `${action}: ${offerName}`.replace(/\s+/g, ' ').trim();
+  if (encoder.encode(full).length <= WALLET_DESCRIPTION_BYTES) return full;
+  let cut = '';
+  for (const char of full) {
+    if (encoder.encode(`${cut}${char}…`).length > WALLET_DESCRIPTION_BYTES) break;
+    cut += char;
+  }
+  return `${cut.trimEnd()}…`;
+}
+
 // ---------- Seller: encrypt and upload ----------
 
 /** Encrypts the file, uploads the ciphertext and returns what the offer needs. */
@@ -198,7 +213,7 @@ export async function payForBid(bidId, maxPrice) {
   const wallet = getWallet();
   const lockingScript = await pledgeLockingScript(wallet, req.keyID);
   const { tx } = await wallet.createAction({
-    description: req.description,
+    description: walletDescription('Pledge', req.offerName),
     outputs: req.outputs.map((satoshis) => ({ lockingScript, satoshis, outputDescription: 'Pledge for a group purchase' })),
     labels: ['datamarket'],
   });
@@ -226,29 +241,27 @@ const b64 = (s) => Utils.toBase64(Hash.sha256(Utils.toArray(s, 'utf8')).slice(0,
 
 /** Adds a broadcast refund to the wallet's balance (a BRC-29 payment from "anyone" to itself). */
 async function internalizeRefund(id, refund) {
-  await getWallet().internalizeAction({
-    tx: Utils.toArray(refund.beef, 'hex'),
-    outputs: [{
-      outputIndex: 0,
-      protocol: 'wallet payment',
-      paymentRemittance: {
-        derivationPrefix: refund.prefix, derivationSuffix: refund.suffix, senderIdentityKey: ANYONE_KEY,
-      },
-    }],
-    description: 'Data market refund',
-    labels: ['datamarket'],
-  });
+  try {
+    await getWallet().internalizeAction({
+      tx: Utils.toArray(refund.beef, 'hex'),
+      outputs: [{
+        outputIndex: 0,
+        protocol: 'wallet payment',
+        paymentRemittance: {
+          derivationPrefix: refund.prefix, derivationSuffix: refund.suffix, senderIdentityKey: ANYONE_KEY,
+        },
+      }],
+      description: refund.description ?? 'Data market refund',
+      labels: ['datamarket'],
+    });
+  } catch (e) {
+    if (!/already/i.test(e.message)) throw e;
+  }
   store.del(pendingRefund(id));
 }
 
-/**
- * Returns the buyer's unused pledges to their wallet. The wallet signs the refund; the
- * server only broadcasts it. Resumable: a refund broadcast earlier is just internalized.
- */
-export async function refundPledges(id) {
-  const pending = store.get(pendingRefund(id));
-  if (pending) return internalizeRefund(id, JSON.parse(pending));
-
+/** Signs a refund of everything the server lists as unused and keeps it until it is in the wallet. */
+async function signRefund(id) {
   const r = await request(`/api/bids/${id}/refund`);
   const wallet = getWallet();
   const { publicKey: me } = await wallet.getPublicKey({ identityKey: true });
@@ -264,11 +277,68 @@ export async function refundPledges(id) {
   for (let i = 0; i < pledges.length; i++) {
     tx.inputs[i].unlockingScript = await signWithPledgeKey(wallet, pledges[i].keyID, tx, i, REFUND_SCOPE);
   }
-  const refund = { beef: hex(tx.toAtomicBEEF()), prefix, suffix };
-  await request(`/api/bids/${id}/refund`, { beef: refund.beef });
-  // Broadcast: from here on the money is at the wallet's key, it only needs adding to the balance.
+  const refund = { beef: hex(tx.toAtomicBEEF()), prefix, suffix, description: walletDescription('Refund', r.offerName) };
   store.set(pendingRefund(id), JSON.stringify(refund));
+  return refund;
+}
+
+async function takeBack(id) {
+  const pending = store.get(pendingRefund(id));
+  const refund = pending ? JSON.parse(pending) : await signRefund(id);
+  try {
+    // Safe to repeat: a refund the server has broadcast already is just confirmed.
+    await request(`/api/bids/${id}/refund`, { beef: refund.beef });
+  } catch (e) {
+    if ([400, 404, 409].includes(e.status)) store.del(pendingRefund(id));
+    throw e;
+  }
   return internalizeRefund(id, refund);
+}
+
+const refunding = new Map(); // bidId → the refund in progress
+
+/**
+ * Returns the buyer's unused pledges to their wallet. The wallet signs the refund; the
+ * server only broadcasts it. Resumable, and a second call joins the one in progress.
+ */
+export function refundPledges(id) {
+  if (!refunding.has(id)) refunding.set(id, takeBack(id).finally(() => refunding.delete(id)));
+  return refunding.get(id);
+}
+
+// ---------- Buyer: refunds without being asked ----------
+
+const REFUND_RETRY_MS = 600_000;
+const refundFailedAt = new Map(); // bidId → time of the last failure
+
+const pendingRefundIds = () => {
+  try {
+    const prefix = pendingRefund('');
+    return Object.keys(localStorage).filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Takes back what the buyer's bids no longer need, such as the part of a maximum above the
+ * final share, and finishes refunds that were interrupted. A refused wallet prompt is not
+ * repeated for a while. `notify(message, kind)` reports progress.
+ */
+export async function runBuyerTasks(notify = () => {}) {
+  const { bids } = await request('/api/exposure');
+  const amounts = new Map(bids.filter((b) => b.refundable > 0).map((b) => [b.bidId, b.refundable - b.refundFee]));
+  for (const id of new Set([...amounts.keys(), ...pendingRefundIds()])) {
+    if (Date.now() - (refundFailedAt.get(id) ?? 0) < REFUND_RETRY_MS) continue;
+    try {
+      await refundPledges(id);
+      const amount = amounts.get(id);
+      notify(amount ? `${amount.toLocaleString()} sats of unused pledge are back in your wallet` : 'Your unused pledge is back in your wallet', 'success');
+    } catch (e) {
+      refundFailedAt.set(id, Date.now());
+      notify(`Could not take back an unused pledge: ${e.message}`, 'error');
+    }
+  }
 }
 
 // ---------- Buyer: download ----------
@@ -278,7 +348,10 @@ const reportFailure = (bidId, reason) => request(`/api/bids/${bidId}/receipt`, {
 /** Asks the seller to deliver the key again (when the wallet cannot unwrap it). */
 export const requestRedelivery = (bidId, reason) => reportFailure(bidId, reason);
 
-/** Unwraps the key, downloads and checks the ciphertext, decrypts and saves the file. */
+/**
+ * Unwraps the key, downloads and checks the ciphertext, decrypts and saves the file. This does
+ * not confirm receipt: only the buyer can tell whether the data is what they paid for.
+ */
 export async function downloadPurchase(bidId, fileName) {
   const d = await request(`/api/bids/${bidId}/delivery`);
   const { plaintext: key } = await getWallet().decrypt({
@@ -296,10 +369,9 @@ export async function downloadPurchase(bidId, fileName) {
     data = await subtle().decrypt({ name: 'AES-GCM', iv: blob.slice(0, 12) }, aes, blob.slice(12));
   } catch {
     // The key is definitely wrong: the seller is asked to deliver again.
-    await reportFailure(bidId, 'The delivered key does not decrypt the data').catch(() => {});
-    throw new Error('The delivered key does not open the data. The seller has been asked to deliver again.');
+    const asked = await reportFailure(bidId, 'The delivered key does not decrypt the data').then(() => true, () => false);
+    throw new Error(`The delivered key does not open the data.${asked ? ' The seller has been asked to deliver again.' : ''}`);
   }
-  await request(`/api/bids/${bidId}/receipt`, { ok: true });
 
   const url = URL.createObjectURL(new Blob([data]));
   const a = Object.assign(document.createElement('a'), { href: url, download: fileName || 'data' });
@@ -340,7 +412,7 @@ export async function runSellerTasks(notify = () => {}) {
               senderIdentityKey: t.claim.senderIdentityKey,
             },
           }],
-          description: 'Data market sale',
+          description: walletDescription('Sale', t.offerName),
           labels: ['datamarket'],
         });
         await request(`/api/offers/${t.offerId}/claimed`, {});

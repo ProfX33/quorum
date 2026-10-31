@@ -265,7 +265,7 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                 continue
 
             status = my_bid.get("status")
-            refundable = my_bid.get("refundable", 0)
+            refundable = my_bid.get("refundable", 0) - my_bid.get("refundFee", 0)
 
             if refundable > 0:
                 try:
@@ -279,6 +279,10 @@ WICHTIGE MARKTPLATZ- UND ABRECHNUNGSREGELN (settlement.ts):
                 try:
                     saved = self.cli("download", my_bid["id"])
                     print(f"[Lieferung] '{offer.get('name')}' entschlüsselt: {saved['file']} ({saved['bytes']} Bytes)")
+                    if saved["bytes"] > 0:
+                        self.cli("confirm", my_bid["id"])
+                    else:
+                        self.cli("report", my_bid["id"], "Die gelieferte Datei ist leer")
                 except Exception as e:
                     print(f"[Lieferung-Warnung] Download fehlgeschlagen ({e}).")
 

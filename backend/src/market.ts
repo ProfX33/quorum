@@ -1,5 +1,6 @@
 import { sql } from "./db.ts";
 import { PLEDGE_FEE, derivationNonce, pledgeMiningFee, txUrl } from "./payments.ts";
+import { DELIVERY_GRACE_MS } from "./reputation.ts";
 import { person } from "./profiles.ts";
 import { type Bid, denominations, findPaymentGroup, projectBid, smallestJoiningBid } from "./settlement.ts";
 
@@ -124,12 +125,18 @@ const toOffer = (row: any, userId: string | null) => {
           // What the buyer's pledges count towards the share, and what they can take back.
           pledged: Number(row.my_credited ?? 0),
           refundable: Number(row.my_refundable ?? 0),
+          refundFee: Number(row.my_refund_outputs ?? 0) * PLEDGE_FEE,
           txid: GROUP_STATES.includes(row.my_status) ? row.payment_txid : null,
           txUrl: GROUP_STATES.includes(row.my_status) && row.payment_txid ? txUrl(row.payment_txid) : null,
           paymentSeen: GROUP_STATES.includes(row.my_status) && row.payment_seen_at != null,
           paymentError: row.payment_error,
           disputeReason: row.my_dispute_reason,
           reportedAt: row.my_reported_at ? new Date(row.my_reported_at).toISOString() : null,
+          hasKey: row.my_has_key === true,
+          // Until then a data buyer waiting for the key cannot report the seller.
+          reportFrom: row.kind === "data" && row.my_status === "paid" && row.payment_seen_at
+            ? new Date(new Date(row.payment_seen_at).getTime() + DELIVERY_GRACE_MS).toISOString()
+            : null,
         },
   };
 };
@@ -157,10 +164,12 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
       (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'pledged') AS pledged_count,
       f.name AS file_name, f.size AS file_size,
       my.id AS my_id, my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount,
-      my.dispute_reason AS my_dispute_reason, my.reported_at AS my_reported_at,
+      my.dispute_reason AS my_dispute_reason, my.reported_at AS my_reported_at, my.wrapped_key IS NOT NULL AS my_has_key,
       (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = my.id AND p.status IN ('active', 'used')) AS my_credited,
       (SELECT sum(p.satoshis) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
-         AND my.status NOT IN ('open', 'won', 'pledged')) AS my_refundable
+         AND NOT (my.status IN ('open', 'won', 'pledged') OR (my.status = 'paid' AND s.payment_seen_at IS NULL))) AS my_refundable,
+      (SELECT count(*) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
+         AND NOT (my.status IN ('open', 'won', 'pledged') OR (my.status = 'paid' AND s.payment_seen_at IS NULL))) AS my_refund_outputs
     FROM sell_offers s
     JOIN users u ON u.id = s.seller_id
     LEFT JOIN data_files f ON f.hash = s.data_hash
@@ -365,12 +374,13 @@ export async function withdrawOffer(sellerId: string, offerId: string) {
 }
 
 /**
- * What the user's pledges hold: `locked` still backs an open or settling bid, `refundable`
+ * What the user's pledges hold: `locked` still backs an open or settling bid, or a group
+ * payment the network has not seen yet (a rejected one is rebuilt from it), `refundable`
  * can be taken back now. Both include the fee contributions; `refundFee` goes to the miners.
  */
 export async function pledgeExposure(userId: string) {
   const rows = await sql`
-    SELECT b.id, b.status, b.max_price, s.id AS offer_id, s.name, s.deadline,
+    SELECT b.id, b.status, b.max_price, s.id AS offer_id, s.name, s.deadline, s.payment_seen_at,
       sum(p.satoshis) AS satoshis, count(*)::int AS outputs
     FROM pledges p
     JOIN buy_offers b ON b.id = p.bid_id
@@ -379,7 +389,7 @@ export async function pledgeExposure(userId: string) {
     GROUP BY b.id, s.id
     ORDER BY s.deadline`;
   const bids = (rows as any[]).map((r) => {
-    const held = ["open", "won", "pledged"].includes(r.status);
+    const held = ["open", "won", "pledged"].includes(r.status) || (r.status === "paid" && !r.payment_seen_at);
     return {
       bidId: r.id as string,
       offerId: r.offer_id as string,

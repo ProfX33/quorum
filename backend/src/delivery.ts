@@ -83,7 +83,7 @@ export async function offerData(offerId: string) {
 
 async function loadBid(bidId: string) {
   const [bid] = await sql`
-    SELECT b.*, s.kind, s.price, s.data_hash, s.seller_key_wrap, s.payment_deadline, s.seller_id,
+    SELECT b.*, s.name AS offer_name, s.kind, s.price, s.data_hash, s.seller_key_wrap, s.payment_deadline, s.seller_id,
       s.status AS offer_status, s.deadline AS offer_deadline,
       s.payment_prefix AS group_prefix, s.payment_suffix AS group_suffix, s.payment_seen_at AS group_seen_at,
       u.identity_key AS seller_key, bu.identity_key AS buyer_key,
@@ -128,7 +128,7 @@ export async function paymentRequest(buyerId: string, bidId: string) {
     outputs: denominations(due).map((v) => v + PLEDGE_FEE),
     keyID: `${bid.id} ${bid.pledge_count}`,
     deadline: new Date(bid.offer_deadline).toISOString(),
-    description: "Data market pledge",
+    offerName: bid.offer_name as string,
     // The buyer's wallet re-derives the seller output from these before signing.
     offerId: bid.sell_offer_id as string,
     price: Number(bid.price),
@@ -396,18 +396,23 @@ export async function expireDue() {
 
 // ---------- Refunds ----------
 
-const inGroup = (status: string) => ["open", "won", "pledged"].includes(status);
+// A group payment the network has not seen yet can still be rejected and rebuilt from the
+// members' other pledges, so those stay in place until it has.
+const pledgesHeld = (bid: any) =>
+  ["open", "won", "pledged"].includes(bid.status) || (bid.status === "paid" && !bid.group_seen_at);
+const HELD = "Your pledge still backs your bid; withdraw the bid or wait for the group payment to take it back";
 
-/** The buyer's unused pledges, for their wallet to sign a refund (only once out of the group). */
+/** The buyer's unused pledges, for their wallet to sign a refund (once out of the group or paid). */
 export async function refundRequest(buyerId: string, bidId: string) {
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (inGroup(bid.status)) return fail(409, "Your pledge still backs your bid; withdraw the bid to take it back");
+  if (pledgesHeld(bid)) return fail(409, HELD);
   const pledges = await sql`
     SELECT txid, vout, satoshis, key_id, beef FROM pledges WHERE bid_id = ${bidId} AND status = 'active'
     ORDER BY created_at`;
   if (pledges.length === 0) return fail(409, "There is nothing to refund");
   return {
+    offerName: bid.offer_name as string,
     // The refund pays the fee contribution of each pledge to the miners.
     fee: PLEDGE_FEE * pledges.length,
     pledges: pledges.map((p: any) => ({
@@ -421,7 +426,7 @@ export async function submitRefund(buyerId: string, bidId: string, beefHex: unkn
   if (!isHex(beefHex, MAX_BEEF_BYTES)) return fail(400, "beef must be the hex AtomicBEEF of the refund");
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (inGroup(bid.status)) return fail(409, "Your pledge still backs your bid; withdraw the bid to take it back");
+  if (pledgesHeld(bid)) return fail(409, HELD);
   const pledges = await sql`SELECT txid, vout, status, refund_txid FROM pledges WHERE bid_id = ${bidId}`;
   const refund = await parseRefund(
     Utils.toArray(beefHex, "hex"),
@@ -469,7 +474,8 @@ export async function sellerTasks(sellerId: string) {
     FROM buy_offers b
     JOIN sell_offers s ON s.id = b.sell_offer_id
     JOIN users bu ON bu.id = b.buyer_id
-    WHERE s.seller_id = ${sellerId} AND s.kind = 'data' AND s.payment_seen_at IS NOT NULL AND b.status = 'paid'
+    WHERE s.seller_id = ${sellerId} AND s.kind = 'data' AND s.payment_seen_at IS NOT NULL
+      AND (b.status = 'paid' OR (b.status = 'disputed' AND b.reported_at IS NOT NULL AND b.wrapped_key IS NULL))
     ORDER BY s.paid_at LIMIT 50`;
   return [
     ...claims.map((r: any) => ({
@@ -506,15 +512,19 @@ export async function markClaimed(sellerId: string, offerId: string) {
   return rows.length > 0;
 }
 
-/** Stores the data key, encrypted by the seller's wallet for this buyer (BRC-2). */
+/**
+ * Stores the data key, encrypted by the seller's wallet for this buyer (BRC-2). A buyer who
+ * reported the seller for not delivering still gets it; the bid stays disputed.
+ */
 export async function deliverKey(sellerId: string, bidId: string, wrappedKey: unknown) {
   if (!isHex(wrappedKey, 1024)) return fail(400, "wrappedKey must be hex");
   const rows = await sql`
-    UPDATE buy_offers b SET status = 'delivered', wrapped_key = ${wrappedKey.toLowerCase()},
+    UPDATE buy_offers b SET status = CASE WHEN b.status = 'disputed' THEN 'disputed' ELSE 'delivered' END, wrapped_key = ${wrappedKey.toLowerCase()},
       delivered_at = now(), delivery_attempts = b.delivery_attempts + 1
     FROM sell_offers s
     WHERE b.id = ${bidId} AND s.id = b.sell_offer_id AND s.seller_id = ${sellerId} AND s.kind = 'data'
-      AND b.status = 'paid' AND s.payment_seen_at IS NOT NULL
+      AND (b.status = 'paid' OR (b.status = 'disputed' AND b.reported_at IS NOT NULL AND b.wrapped_key IS NULL))
+      AND s.payment_seen_at IS NOT NULL
     RETURNING b.id`;
   return rows.length > 0 ? { ok: true } : fail(409, "This bid is not waiting for delivery");
 }
@@ -525,7 +535,9 @@ export async function deliverKey(sellerId: string, bidId: string, wrappedKey: un
 export async function delivery(buyerId: string, bidId: string) {
   const bid = await loadBid(bidId);
   if (!bid || bid.buyer_id !== buyerId) return fail(404, "Not found");
-  if (!["delivered", "received"].includes(bid.status)) return fail(409, "The key has not been delivered yet");
+  if (!bid.wrapped_key || !["delivered", "received", "disputed"].includes(bid.status)) {
+    return fail(409, "The key has not been delivered yet");
+  }
   return {
     offerId: bid.sell_offer_id as string,
     seller: bid.seller_key as string,
@@ -535,8 +547,8 @@ export async function delivery(buyerId: string, bidId: string) {
 }
 
 /**
- * The buyer reports whether decryption worked. A failure sends the bid back to the seller
- * for another delivery; after MAX_DELIVERY_ATTEMPTS it is marked disputed.
+ * The buyer accepts what they got, or reports that decryption failed. A failure sends the
+ * bid back to the seller for another delivery; after MAX_DELIVERY_ATTEMPTS it is marked disputed.
  */
 export async function confirmReceipt(buyerId: string, bidId: string, ok: unknown, reason: unknown) {
   const bid = await loadBid(bidId);

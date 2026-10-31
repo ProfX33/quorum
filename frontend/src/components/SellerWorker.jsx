@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { runSellerTasks } from '../delivery';
+import { runBuyerTasks, runSellerTasks } from '../delivery';
 
 const POLL_MS = 10_000;
 const TOAST_MS = 8_000;
 
 /**
- * Runs while a user is signed in: claims the payments they received as a seller and
- * delivers the data keys to the buyers. Shows what happened as toasts.
+ * Runs while a user is signed in: claims the payments they received as a seller, delivers
+ * the data keys to the buyers, and takes back the pledges their own bids no longer need.
+ * Shows what happened as toasts.
  */
 export default function SellerWorker({ user }) {
   const [toasts, setToasts] = useState([]);
@@ -22,13 +23,9 @@ export default function SellerWorker({ user }) {
     const tick = async () => {
       if (running.current) return;
       running.current = true;
-      try {
-        await runSellerTasks(notify);
-      } catch (e) {
-        console.warn('Seller tasks failed', e);
-      } finally {
-        running.current = false;
-      }
+      await runSellerTasks(notify).catch((e) => console.warn('Seller tasks failed', e));
+      await runBuyerTasks(notify).catch((e) => console.warn('Buyer tasks failed', e));
+      running.current = false;
     };
     tick();
     const t = setInterval(tick, POLL_MS);

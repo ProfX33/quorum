@@ -214,7 +214,7 @@ export class MarketAgent {
     }
   }
 
-  /** Takes back pledges that ended up unused, after the agent left the group or the offer failed. */
+  /** Takes back pledges that ended up unused: what its share did not need, or all of it when out of the group. */
   async refund(bidId: string) {
     const pendingId = `refund:${bidId}`;
     let refund = this.wallet.pending(pendingId);
@@ -236,7 +236,10 @@ export class MarketAgent {
     return result;
   }
 
-  /** Unwraps the key, checks the download against the commitment, decrypts it and confirms receipt. */
+  /**
+   * Unwraps the key, checks the download against the commitment and decrypts it. Whether the
+   * data is what was described is the caller's call: follow up with confirm or reportSeller.
+   */
   async download(bidId: string) {
     const d = await this.call(`/api/bids/${bidId}/delivery`);
     const blob = new Uint8Array(await (await this.fetch(`/api/offers/${d.offerId}/data`)).arrayBuffer());
@@ -252,14 +255,28 @@ export class MarketAgent {
       await this.call(`/api/bids/${bidId}/receipt`, { body: { ok: false, reason: "The delivered key does not decrypt the data" } });
       throw new Error("The delivered key does not open the data. The seller has been asked to deliver again.");
     }
-    await this.call(`/api/bids/${bidId}/receipt`, { body: { ok: true } });
     return data;
+  }
+
+  /** Accepts what was delivered. Final: the seller gains reputation and can't be reported afterwards. */
+  async confirm(bidId: string) {
+    const result = await this.call(`/api/bids/${bidId}/receipt`, { body: { ok: true } });
+    this.wallet.setPending(`checked:${bidId}`, undefined);
+    return result;
+  }
+
+  /** Reports that the seller did not hand over what they described, which halves their reputation. */
+  async reportSeller(bidId: string, reason: string) {
+    const result = await this.call(`/api/bids/${bidId}/report`, { body: { reason } });
+    this.wallet.setPending(`checked:${bidId}`, undefined);
+    return result;
   }
 
   // ---------- Everything that is due ----------
 
   /**
-   * One round of the agent's obligations: pledges open bids, collects delivered data, takes
+   * One round of the agent's obligations: pledges open bids, collects delivered data (once;
+   * the caller then decides between confirm and reportSeller), takes
    * back unused pledges, claims payments and delivers keys. Call it in a loop. A step that
    * fails is reported as an `error` event and comes up again in the next round.
    */
@@ -279,10 +296,15 @@ export class MarketAgent {
         if (offer.status === "open" && bid.pledged < bid.maxPrice && new Date(offer.deadline) > new Date()) {
           await step(ids, async () => ({ type: "pledged", ...(await this.pay(bid.id)) }));
         }
-      } else if (bid.status === "delivered") {
-        await step(ids, async () => ({ type: "data", data: await this.download(bid.id) }));
-      } else if (bid.refundable > 0) {
-        await step(ids, async () => ({ type: "refunded", amount: bid.refundable, ...(await this.refund(bid.id)) }));
+      } else if (bid.status === "delivered" && !this.wallet.pending(`checked:${bid.id}`)) {
+        await step(ids, async () => {
+          const data = await this.download(bid.id);
+          this.wallet.setPending(`checked:${bid.id}`, true);
+          return { type: "data", data };
+        });
+      }
+      if (bid.refundable > 0) {
+        await step(ids, async () => ({ type: "refunded", amount: bid.refundable - bid.refundFee, ...(await this.refund(bid.id)) }));
       }
     }
     for (const task of await this.sellerTasks()) {

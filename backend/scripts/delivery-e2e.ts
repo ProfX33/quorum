@@ -3,7 +3,7 @@
 // WhatsOnChain (started here), so nothing reaches the real network:
 //   createdb app_test
 //   ARCADE_URL=http://localhost:4199 WOC_URL=http://localhost:4199/woc \
-//     DATABASE_URL=postgres://app:app@localhost:5432/app_test PORT=4100 bun src/index.ts
+//     DELIVERY_GRACE_HOURS=0.002 DATABASE_URL=postgres://app:app@localhost:5432/app_test PORT=4100 bun src/index.ts
 //   API_URL=http://localhost:4100 bun scripts/delivery-e2e.ts
 // It also serves as a reference for how an agent talks to the API.
 import { MerklePath, P2PKH, PrivateKey, ProtoWallet, Transaction, Utils, LockingScript } from "@bsv/sdk";
@@ -223,7 +223,10 @@ console.log("\n# group pays in full");
   const paid = await waitFor(alice, id, (o) => o.myBid.paymentSeen);
   assert(paid.status === "sold" && paid.myBid.status === "paid" && paid.myBid.amount === 500 && paid.groupPayment.seen,
     "after the deadline the group payment is on the network, and nobody signed anything");
-  assert(paid.myBid.refundable === 100 + 3 * PLEDGE_FEE, "what alice's share did not need stays hers");
+  assert(paid.myBid.refundable === 100 + 3 * PLEDGE_FEE && paid.myBid.refundFee === 3 * PLEDGE_FEE, "what alice's share did not need stays hers");
+  const exposure = await alice.call("/api/exposure");
+  assert(exposure.bids.some((b: any) => b.bidId === before.id && b.refundable === paid.myBid.refundable && b.locked === 0),
+    "and her exposure lists it as refundable");
 
   const claim = await claimOf(id);
   const tx = groupPayment(claim);
@@ -248,6 +251,7 @@ console.log("\n# group pays in full");
   assert((await deliver(again)).ok, "key delivered again");
   assert((await alice.call(`/api/bids/${before.id}/receipt`, { body: { ok: true } })).status === "received", "alice confirms receipt");
   assert((await seller.call(`/api/offers/${id}`)).offer.sales?.received === 1, "seller sees the completed sale");
+  assert((await alice.call(`/api/bids/${before.id}/report`, { body: { reason: "too late" } })).status === 409, "a confirmed sale cannot be reported");
 }
 
 // ---------- 2. a troll bids high and never pays: it changes nothing ----------
@@ -296,6 +300,11 @@ console.log("\n# a pledge is spent elsewhere");
   rejectGroups = true;
   const { id, settled, pledges: [p] } = await sale("e2e reject", [[alice, 1500], [bob, 1500]]);
   const a = settled.myBid;
+  const unseen = await waitFor(bob, id, (o) => o.myBid.status === "paid");
+  assert(unseen.myBid.refundable === 0 && (await bob.call(`/api/bids/${unseen.myBid.id}/refund`)).status === 409,
+    "what his share does not need stays held while the network has not seen the payment");
+  assert((await bob.call("/api/exposure")).bids.some((x: any) => x.bidId === unseen.myBid.id && x.locked > 0 && x.refundable === 0),
+    "and it shows as locked");
   for (const { vout } of p.body.pledges) spent.set(`${p.tx.id("hex")}:${vout}`, "ff".repeat(32));
   const undone = await waitFor(alice, id, (o) => o.myBid.status === "defaulted");
   assert(undone.myBid.status === "defaulted" && !undone.myBid.paymentSeen, "the rejected payment is undone and alice is out");
@@ -308,6 +317,42 @@ console.log("\n# a pledge is spent elsewhere");
   const usedOnes = new Set(groupPayment(claim).inputs.map((i) => `${i.sourceTXID ?? i.sourceTransaction?.id("hex")}:${i.sourceOutputIndex}`));
   assert(left.pledges.every((r: any) => !usedOnes.has(`${r.txid}:${r.vout}`)) && left.pledges.length < p.body.pledges.length,
     "only outputs of hers that were never part of a payment are still listed");
+}
+
+// ---------- reporting a data product ----------
+console.log("\n# reporting a data product");
+{
+  const { id, settled } = await sale("e2e report", [[alice, 500], [bob, 500]]);
+  const a = settled.myBid.id;
+  await waitFor(alice, id, (o) => o.myBid.paymentSeen);
+  const b = (await bob.call(`/api/offers/${id}`)).offer.myBid;
+  const report = (who: Agent, bidId: string) => who.call(`/api/bids/${bidId}/report`, { body: { reason: "not what was described" } });
+  const reputation = async () => (await seller.call(`/api/offers/${id}`)).offer.sellerReputation;
+  const task = async (who: Agent) =>
+    (await seller.call("/api/seller/tasks")).tasks.find((t: any) => t.deliver && t.offerId === id && t.buyer === who.identityKey);
+
+  assert(b.reportFrom && (await report(bob, b.id)).status === 409, "an offline seller gets time to deliver first");
+  await deliver(await task(alice));
+  assert((await decrypt(alice, a, id)) === new TextDecoder().decode(plaintext), "alice decrypts the data");
+  assert((await alice.call(`/api/offers/${id}`)).offer.myBid.status === "delivered", "decrypting does not confirm receipt");
+
+  const before = await reputation();
+  assert((await alice.call(`/api/bids/${a}/report`, { body: { reason: "  " } })).status === 400, "a report needs a reason");
+  assert((await report(bob, a)).status === 404, "nobody else can report her bid");
+  assert((await report(alice, a)).status === "disputed", "she reports the data after looking at it");
+  assert((await reputation()) === Math.floor(before / 2), "the seller's reputation halves");
+  assert((await report(alice, a)).status === 409, "reporting twice is refused");
+  assert((await alice.call(`/api/bids/${a}/receipt`, { body: { ok: true } })).status === 409, "a report cannot be turned into a confirmation");
+  assert((await decrypt(alice, a, id)) === new TextDecoder().decode(plaintext), "she can still download what she paid for");
+
+  await sleep(8000);
+  assert((await report(bob, b.id)).status === "disputed", "after the grace period bob reports the missing key");
+  assert((await reputation()) === Math.floor(before / 2), "one offer costs the seller once");
+  assert(!(await task(alice)) && (await deliver(await task(bob))).ok, "the seller can still deliver to bob");
+  const late = (await bob.call(`/api/offers/${id}`)).offer.myBid;
+  assert(late.status === "disputed" && late.hasKey, "the bid stays disputed");
+  assert((await decrypt(bob, b.id, id)) === new TextDecoder().decode(plaintext), "and bob gets his data");
+  assert(!(await task(bob)), "nothing left to deliver");
 }
 
 // ---------- 5. changing your mind before the deadline ----------
