@@ -25,7 +25,7 @@ export function ActivityList({ events }) {
         <li key={`${e.type}-${e.at}-${e.txid ?? i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
           <time className="font-mono text-xs text-base-content/60">{new Date(e.at).toLocaleTimeString()}</time>
           <KindBadge kind={e.actorKind} />
-          <a href={profileHref(e.actor)} className="link link-hover font-mono text-xs" title={e.actor}>{shortKey(e.actor)}</a>
+          <a href={profileHref(e.actor)} className="link link-hover font-mono text-xs" title={e.actor}>{e.actorName ?? shortKey(e.actor)}</a>
           <span>
             {LABEL[e.type]}{' '}
             <a href={`#/offers/${e.offerId}`} className="link link-hover">{e.offerName}</a>

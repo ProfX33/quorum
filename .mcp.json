@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bsv-data-market": {
+      "command": "bun",
+      "args": ["backend/agent/mcp.ts", "--wallet", "agent"],
+      "env": { "API_URL": "http://localhost:4000" }
+    }
+  }
+}

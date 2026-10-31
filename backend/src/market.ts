@@ -494,7 +494,7 @@ export async function withdrawRequest(buyerId: string, requestId: string) {
  */
 export async function listActivity() {
   const rows = await sql`
-    SELECT * FROM (
+    SELECT e.*, a.display_name AS actor_name FROM (
       SELECT 'listed' AS type, s.created_at AS at, s.id AS offer_id, s.name AS offer_name,
         u.identity_key AS actor, u.kind AS actor_kind, s.price AS satoshis, NULL::text AS txid
       FROM sell_offers s JOIN users u ON u.id = s.seller_id
@@ -530,7 +530,8 @@ export async function listActivity() {
       WHERE p.refunded_at IS NOT NULL
       GROUP BY p.refund_txid, s.id, s.name, u.identity_key, u.kind
     ) e
-    ORDER BY at DESC
+    JOIN users a ON a.identity_key = e.actor
+    ORDER BY e.at DESC
     LIMIT 50`;
   return rows.map((r: any) => ({
     type: r.type,
@@ -538,6 +539,7 @@ export async function listActivity() {
     offerId: r.offer_id,
     offerName: r.offer_name,
     actor: r.actor,
+    actorName: r.actor_name,
     actorKind: r.actor_kind,
     satoshis: r.satoshis == null ? null : Number(r.satoshis),
     txid: r.txid,

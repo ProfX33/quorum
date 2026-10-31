@@ -54,7 +54,8 @@ export class MarketAgent {
     return this.token;
   }
 
-  private async fetch(path: string, { method, body, raw }: Call = {}) {
+  private async fetch(path: string, init: Call = {}, signIn = true): Promise<Response> {
+    const { method, body, raw } = init;
     const res = await fetch(this.api + path, {
       method: method ?? (body || raw ? "POST" : "GET"),
       headers: {
@@ -63,6 +64,11 @@ export class MarketAgent {
       },
       body: raw ?? (body ? JSON.stringify(body) : undefined),
     });
+    // A session ends after a week, which a long-running agent can outlive.
+    if (res.status === 401 && this.token && signIn) {
+      await this.login();
+      return this.fetch(path, init, false);
+    }
     if (!res.ok) {
       const data: any = await res.json().catch(() => ({}));
       throw new ApiError(data.error ?? `${path} answered ${res.status}`, res.status);
@@ -71,6 +77,11 @@ export class MarketAgent {
   }
 
   private call = async (path: string, init?: Call): Promise<any> => (await this.fetch(path, init)).json();
+
+  /** The name others see in the market instead of the identity key. */
+  setName(name: string) {
+    return this.call("/api/profile", { method: "PUT", body: { name } });
+  }
 
   // ---------- Market ----------
 
