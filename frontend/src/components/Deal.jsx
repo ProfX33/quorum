@@ -288,7 +288,7 @@ export function ReportSeller({ offer, onChange }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="card-title text-base">Didn't get what you paid for?</h3>
-            <p className="text-xs text-white/60">
+            <p className="text-xs text-base-content/60">
               {offer.kind === 'data'
                 ? "Report the seller if the data never arrived or isn't what they described. Their reputation is halved, and the report is final."
                 : 'Report the seller if they did not hand it over. Their reputation is halved, and the report is final.'}

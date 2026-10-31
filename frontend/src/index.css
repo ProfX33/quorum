@@ -3,35 +3,34 @@
   themes: false;
 }
 
-/* Palette: Deep space blue #002642, Wisteria blue #7EA3CC, Cream #F3F9D2, Pitch black #0E0A06 */
+/* Palette: Concrete #D6D6CF, Signal orange #E5500E, Electric violet #6A5AE6, Ink #141414 */
 @plugin "daisyui/theme" {
   name: "market";
   default: true;
-  prefersdark: true;
-  color-scheme: dark;
-  --color-base-100: #002642;
-  --color-base-200: #001d33;
-  --color-base-300: #0E0A06;
-  --color-base-content: #ffffff;
-  --color-primary: #7EA3CC;
-  --color-primary-content: #0E0A06;
-  --color-secondary: #F3F9D2;
-  --color-secondary-content: #0E0A06;
-  --color-accent: #F3F9D2;
-  --color-accent-content: #0E0A06;
-  --color-neutral: #0E0A06;
-  --color-neutral-content: #ffffff;
-  --color-info: #7EA3CC;
-  --color-info-content: #0E0A06;
-  --color-success: #F3F9D2;
-  --color-success-content: #0E0A06;
-  --color-warning: #F3F9D2;
-  --color-warning-content: #0E0A06;
-  --color-error: #ff8a7a;
-  --color-error-content: #0E0A06;
-  --radius-box: 0.5rem;
-  --radius-field: 0.375rem;
-  --radius-selector: 0.375rem;
+  color-scheme: light;
+  --color-base-100: #D6D6CF;
+  --color-base-200: #E6E6E0;
+  --color-base-300: #F2F2EE;
+  --color-base-content: #141414;
+  --color-primary: #E5500E;
+  --color-primary-content: #ffffff;
+  --color-secondary: #6A5AE6;
+  --color-secondary-content: #ffffff;
+  --color-accent: #6A5AE6;
+  --color-accent-content: #ffffff;
+  --color-neutral: #141414;
+  --color-neutral-content: #EDEDE7;
+  --color-info: #6A5AE6;
+  --color-info-content: #ffffff;
+  --color-success: #1E8A55;
+  --color-success-content: #ffffff;
+  --color-warning: #D98A00;
+  --color-warning-content: #141414;
+  --color-error: #D02B1C;
+  --color-error-content: #ffffff;
+  --radius-box: 1.5rem;
+  --radius-field: 0.75rem;
+  --radius-selector: 2rem;
   /* daisyUI sizes borders and badge padding from these; without them badges lose their padding */
   --size-selector: 0.25rem;
   --size-field: 0.25rem;
@@ -40,25 +39,93 @@
   --noise: 0;
 }
 
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Archivo", "DM Sans", ui-sans-serif, sans-serif;
+}
+
 body {
-  color: #fff;
+  background: var(--color-base-100);
+  color: var(--color-base-content);
   margin: 0;
   -webkit-font-smoothing: antialiased;
+}
+
+h1, h2 {
+  font-family: var(--font-display);
+  font-stretch: 112%;
+  letter-spacing: -0.02em;
 }
 
 code {
   font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
 }
 
+::selection {
+  background: var(--color-secondary);
+  color: var(--color-secondary-content);
+}
+
+/* Pill buttons with a little lift */
+.btn {
+  border-radius: 999px;
+  font-weight: 500;
+  transition: transform 0.2s ease, background-color 0.2s, border-color 0.2s, color 0.2s;
+}
+.btn:not(:disabled):hover { transform: translateY(-1px); }
+.btn:not(:disabled):active { transform: translateY(0) scale(0.98); }
+
+/* Heavy display type */
+.font-display {
+  font-family: var(--font-display);
+  font-stretch: 112%;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+/* Halftone dot texture for flat surfaces */
+.halftone-dots {
+  background-image: radial-gradient(currentColor 28%, transparent 30%);
+  background-size: 10px 10px;
+}
+
+/* Rounded "inverse" corners joining a notch to a panel; color them with --notch */
+.notch-corner {
+  position: absolute;
+  width: var(--r, 1.75rem);
+  height: var(--r, 1.75rem);
+  pointer-events: none;
+}
+.notch-corner.at-br { background: radial-gradient(circle at 100% 100%, transparent calc(var(--r, 1.75rem) - 0.5px), var(--notch) var(--r, 1.75rem)); }
+.notch-corner.at-tr { background: radial-gradient(circle at 100% 0, transparent calc(var(--r, 1.75rem) - 0.5px), var(--notch) var(--r, 1.75rem)); }
+.notch-corner.at-tl { background: radial-gradient(circle at 0 0, transparent calc(var(--r, 1.75rem) - 0.5px), var(--notch) var(--r, 1.75rem)); }
+
+/* Scroll reveal, driven by useReveal() */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.8s cubic-bezier(0.2, 0.7, 0.2, 1), transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: var(--delay, 0ms);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
 /* Landing page art */
 @keyframes landing-flow { to { stroke-dashoffset: -24; } }
-@keyframes landing-spin { to { transform: rotate(360deg); } }
 @keyframes landing-float { 50% { transform: translateY(-5px); } }
-@keyframes landing-twinkle { 50% { opacity: 0.2; } }
+@keyframes landing-marquee { to { transform: translateX(-50%); } }
+@keyframes landing-rise {
+  from { opacity: 0; transform: translateY(0.4em) rotate(2deg); }
+  to { opacity: 1; transform: none; }
+}
 .landing-flow { animation: landing-flow 1.2s linear infinite; }
-.landing-spin { animation: landing-spin 60s linear infinite; }
 .landing-float { animation: landing-float 4s ease-in-out infinite; }
-.landing-twinkle { animation: landing-twinkle 3s ease-in-out infinite; }
+.landing-marquee { animation: landing-marquee 40s linear infinite; }
+.landing-rise { display: inline-block; animation: landing-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .landing-flow, .landing-spin, .landing-float, .landing-twinkle { animation: none; }
+  .landing-flow, .landing-float, .landing-marquee, .landing-rise { animation: none; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .btn:not(:disabled):hover { transform: none; }
 }

@@ -40,23 +40,23 @@ export default function Navbar({ user, onSignIn, onLogout, nav, counts }) {
   }
 
   return (
-    <header className="navbar sticky top-0 z-10 max-md:flex-wrap border-b border-white/10 bg-base-200 px-6">
+    <header className="navbar sticky top-0 z-30 max-md:flex-wrap border-b border-base-content/10 bg-base-100/80 px-4 backdrop-blur-md sm:px-6">
       <div className="navbar-start">
         <a href="#/" aria-label="Home" onClick={() => nav.goHome()}>
           <img src="/logo.svg" alt="Quorum" className="h-8" />
         </a>
       </div>
       <nav className="navbar-center order-last w-full overflow-x-auto md:order-none md:w-auto">
-        <ul role="tablist" className="menu menu-horizontal gap-2 px-1">
+        <ul role="tablist" className="menu menu-horizontal gap-1 px-1 [&_button]:rounded-full">
           {TABS.map(([key, label]) => (
             <li key={key}>
               <button role="tab" onClick={() => nav.openTab(key)} className={nav.activeTab === key
                   ? 'bg-primary! text-primary-content! hover:bg-primary/85! focus:bg-primary!'
-                  : 'bg-transparent! hover:bg-white/10! focus:bg-transparent! focus-visible:bg-white/10!'}>
+                  : 'bg-transparent! hover:bg-base-content/10! focus:bg-transparent! focus-visible:bg-base-content/10!'}>
                 {label}
                 {counts[key] !== undefined && <span
                     className={`badge badge-sm min-w-6 border-0 px-1.5 font-medium tabular-nums ${
-                      nav.activeTab === key ? 'bg-black/20 text-primary-content' : 'bg-white/15 text-base-content'
+                      nav.activeTab === key ? 'bg-black/20 text-primary-content' : 'bg-base-content/10 text-base-content'
                     }`}
                   >
                     {counts[key]}
@@ -76,7 +76,7 @@ export default function Navbar({ user, onSignIn, onLogout, nav, counts }) {
                 <Avatar person={user} size="xs" />
                 <span className="max-w-40 truncate">{displayName(user)}</span>
               </div>
-              <ul tabIndex={0} className="menu dropdown-content z-20 mt-2 w-40 rounded-box bg-base-300 p-2 shadow">
+              <ul tabIndex={0} className="menu dropdown-content z-20 mt-2 w-40 rounded-box bg-base-300 p-2 shadow-xl">
                 <li><a href={profileHref(user.identityKey)}>My profile</a></li>
                 <li><button onClick={handleLogout}>Sign out</button></li>
               </ul>

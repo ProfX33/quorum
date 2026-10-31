@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { searchMarket } from '../api';
 import Activity from '../components/Activity';
+import Halftone from '../components/Halftone';
 import ListingForm from '../components/ListingForm';
 import { OfferCard, useNow } from '../components/OfferCard';
 import RequestCard from '../components/RequestCard';
 import Navbar from '../components/Navbar';
 
 const REFRESH_MS = 5000;
+
+const TITLES = { offers: 'Sell offers', requests: 'Buy requests', activity: 'Live activity' };
 
 const VIEWS = [
   ['active', 'Active'],
@@ -79,7 +82,15 @@ export default function Market({ user, onSignIn, onLogout, nav }) {
         }}
       />
 
-      <main className="mx-auto max-w-5xl px-6 py-10">
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <header className="relative mb-8 h-36 overflow-hidden rounded-box sm:h-44">
+          <Halftone cell={8} seed={3} />
+          <div className="absolute bottom-0 left-0 rounded-tr-[1.5rem] bg-base-100 pt-3 pr-6 sm:pt-4 sm:pr-8">
+            <h1 className="font-display text-4xl leading-none sm:text-6xl">{TITLES[tab]}</h1>
+            <span className="notch-corner at-tr bottom-full left-0" style={{ '--notch': 'var(--color-base-100)', '--r': '1.5rem' }} />
+            <span className="notch-corner at-tr bottom-0 left-full" style={{ '--notch': 'var(--color-base-100)', '--r': '1.5rem' }} />
+          </div>
+        </header>
         {tab === 'activity' ? <Activity /> : <>
         <section className="card card-border bg-base-200">
           <div className="card-body gap-6 p-6">
@@ -165,8 +176,6 @@ export default function Market({ user, onSignIn, onLogout, nav }) {
             </div>
           </div>
         </section>
-
-        <h2 className="mt-12 text-lg font-medium">{tab === 'offers' ? 'Sell offers' : 'Buy requests'}</h2>
 
         {form && (
           <div className="mt-8">

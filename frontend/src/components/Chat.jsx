@@ -122,14 +122,14 @@ function Chat({ offer, messages, onSent, loadError }) {
       <div className="card-body gap-3">
         <div>
           <h3 className="card-title text-base">Chat</h3>
-          <p className="text-xs text-white/60">
+          <p className="text-xs text-base-content/60">
             The seller and the buyers who paid for "{offer.name}" can see this chat.
           </p>
         </div>
 
         {/* Grows with its messages, so the whole conversation is visible without scrolling inside it. */}
         <div className="flex min-h-40 flex-col gap-1 overflow-x-hidden rounded-box bg-base-300/50 p-3">
-          {messages.length === 0 && <p className="m-auto text-sm text-white/50">No messages yet.</p>}
+          {messages.length === 0 && <p className="m-auto text-sm text-base-content/50">No messages yet.</p>}
           {messages.map((m) => (
             <div key={m.id} className={`chat min-w-0 ${m.mine ? 'chat-end' : 'chat-start'}`}>
               <div className="chat-image"><Avatar person={m.sender} /></div>

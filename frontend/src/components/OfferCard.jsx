@@ -119,8 +119,8 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
           </div>
         </div>
       </div>
-      {offer.description && <p className="mt-3 whitespace-pre-line text-sm text-white/90">{offer.description}</p>}
-      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-white/70">
+      {offer.description && <p className="mt-3 whitespace-pre-line text-sm text-base-content/90">{offer.description}</p>}
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-base-content/70">
         <dt>Seller</dt>
         <dd className="flex items-center gap-2 font-mono">
           <a href={profileHref(offer.seller)} title={offer.seller} className="link link-hover">
@@ -179,7 +179,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
               {(linked ? offer.bidders.slice(0, BIDDERS_ON_CARD) : offer.bidders).map((b) => (
                 <span key={b.identityKey} className="inline-flex min-w-0 items-center gap-1">
                   <UserLink person={b} you={b.identityKey === user?.identityKey} />
-                  {BIDDER_LABEL[b.status] && <span className="text-white/50">· {BIDDER_LABEL[b.status]}</span>}
+                  {BIDDER_LABEL[b.status] && <span className="text-base-content/50">· {BIDDER_LABEL[b.status]}</span>}
                 </span>
               ))}
               {linked && offer.bidders.length > BIDDERS_ON_CARD && (

@@ -22,7 +22,7 @@ export default function Login({ onLogin, onCancel }) {
     <main className="flex flex-1 items-center justify-center px-6 py-16">
       <div className="card card-border bg-base-200 card-body w-full max-w-xs text-center">
         <h1 className="card-title justify-center text-xl tracking-tight">Sign in</h1>
-        <p className="mt-2 text-sm text-white/70">
+        <p className="mt-2 text-sm text-base-content/70">
           Use your BSV wallet. An account is created automatically.
         </p>
         <button

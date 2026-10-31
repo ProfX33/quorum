@@ -42,7 +42,7 @@ export default function DealFiles({ offer, files, onChange }) {
       <section className="card card-border mt-6 bg-base-200">
         <div className="card-body gap-1">
           <h3 className="card-title text-base">Information from the seller</h3>
-          <p className="text-sm text-white/60">The seller has not uploaded any files yet. They appear here as soon as they do.</p>
+          <p className="text-sm text-base-content/60">The seller has not uploaded any files yet. They appear here as soon as they do.</p>
         </div>
       </section>
     );
@@ -53,7 +53,7 @@ export default function DealFiles({ offer, files, onChange }) {
       <div className="card-body gap-3">
         <div>
           <h3 className="card-title text-base">{seller ? 'Information for your buyers' : 'Information from the seller'}</h3>
-          <p className="text-xs text-white/60">
+          <p className="text-xs text-base-content/60">
             {seller
               ? 'Upload the files your buyers need, e.g. access details or instructions. Only you and the buyers who paid can download them.'
               : 'Files the seller uploaded for you.'}
@@ -67,7 +67,7 @@ export default function DealFiles({ offer, files, onChange }) {
                 <a href={f.url} download={f.name} className="link link-hover min-w-0 flex-1 truncate" title={f.name}>
                   {f.name}
                 </a>
-                <span className="shrink-0 text-xs text-white/50">{fileSize(f.size)}</span>
+                <span className="shrink-0 text-xs text-base-content/50">{fileSize(f.size)}</span>
                 {seller && (
                   <button
                     disabled={!!busy}
@@ -95,7 +95,7 @@ export default function DealFiles({ offer, files, onChange }) {
               upload(e.dataTransfer.files);
             }}
             className={`flex cursor-pointer flex-col items-center gap-1 rounded-box border-2 border-dashed px-4 py-6 text-center text-sm transition ${
-              dragging ? 'border-primary bg-primary/10' : 'border-white/20 hover:border-primary'
+              dragging ? 'border-primary bg-primary/10' : 'border-base-content/20 hover:border-primary'
             }`}
           >
             <input ref={input} type="file" multiple className="hidden" disabled={!!busy} onChange={(e) => upload(e.target.files)} />
@@ -104,7 +104,7 @@ export default function DealFiles({ offer, files, onChange }) {
             ) : (
               <>
                 <span className="font-medium">Drop files here or click to upload</span>
-                <span className="text-xs text-white/50">Any file type, up to 20 MB each</span>
+                <span className="text-xs text-base-content/50">Any file type, up to 20 MB each</span>
               </>
             )}
           </label>
