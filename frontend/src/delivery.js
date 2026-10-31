@@ -54,10 +54,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const WALLET_DESCRIPTION_BYTES = 50;
 
-/** How an action is listed in the wallet, e.g. "Pledge: Air quality". Wallets refuse over 50 bytes. */
+/** How an action is listed in the wallet, e.g. "Quorum pledge: Air quality". Wallets refuse over 50 bytes. */
 export function walletDescription(action, offerName) {
   const encoder = new TextEncoder();
-  const full = `${action}: ${offerName}`.replace(/\s+/g, ' ').trim();
+  const full = (offerName ? `${action}: ${offerName}` : action).replace(/\s+/g, ' ').trim();
   if (encoder.encode(full).length <= WALLET_DESCRIPTION_BYTES) return full;
   let cut = '';
   for (const char of full) {
@@ -213,7 +213,7 @@ export async function payForBid(bidId, maxPrice) {
   const wallet = getWallet();
   const lockingScript = await pledgeLockingScript(wallet, req.keyID);
   const { tx } = await wallet.createAction({
-    description: walletDescription('Pledge', req.offerName),
+    description: walletDescription('Quorum pledge', req.offerName),
     outputs: req.outputs.map((satoshis) => ({ lockingScript, satoshis, outputDescription: 'Pledge for a group purchase' })),
     labels: ['datamarket'],
   });
@@ -239,8 +239,16 @@ export const canRefund = (bid) => bid.refundable > 0 || store.get(pendingRefund(
 
 const b64 = (s) => Utils.toBase64(Hash.sha256(Utils.toArray(s, 'utf8')).slice(0, 16));
 
+/** The refund's wallet name; one saved before refunds kept their name looks up its offer. */
+async function refundDescription(id, refund) {
+  if (refund.description) return refund.description;
+  const offers = await request('/api/bids').then((d) => d.offers, () => []);
+  return walletDescription('Quorum refund', offers.find((o) => o.myBid?.id === id)?.name);
+}
+
 /** Adds a broadcast refund to the wallet's balance (a BRC-29 payment from "anyone" to itself). */
 async function internalizeRefund(id, refund) {
+  const description = await refundDescription(id, refund);
   try {
     await getWallet().internalizeAction({
       tx: Utils.toArray(refund.beef, 'hex'),
@@ -251,7 +259,7 @@ async function internalizeRefund(id, refund) {
           derivationPrefix: refund.prefix, derivationSuffix: refund.suffix, senderIdentityKey: ANYONE_KEY,
         },
       }],
-      description: refund.description ?? 'Data market refund',
+      description,
       labels: ['datamarket'],
     });
   } catch (e) {
@@ -277,7 +285,7 @@ async function signRefund(id) {
   for (let i = 0; i < pledges.length; i++) {
     tx.inputs[i].unlockingScript = await signWithPledgeKey(wallet, pledges[i].keyID, tx, i, REFUND_SCOPE);
   }
-  const refund = { beef: hex(tx.toAtomicBEEF()), prefix, suffix, description: walletDescription('Refund', r.offerName) };
+  const refund = { beef: hex(tx.toAtomicBEEF()), prefix, suffix, description: walletDescription('Quorum refund', r.offerName) };
   store.set(pendingRefund(id), JSON.stringify(refund));
   return refund;
 }
@@ -412,7 +420,7 @@ export async function runSellerTasks(notify = () => {}) {
               senderIdentityKey: t.claim.senderIdentityKey,
             },
           }],
-          description: walletDescription('Sale', t.offerName),
+          description: walletDescription('Quorum sale', t.offerName),
           labels: ['datamarket'],
         });
         await request(`/api/offers/${t.offerId}/claimed`, {});
