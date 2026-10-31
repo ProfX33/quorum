@@ -95,6 +95,7 @@ const toOffer = (row: any, userId: string | null) => {
       status: b.status,
     })),
     sellerKind: row.seller_kind,
+    sellerReputation: Number(row.seller_reputation),
     createdAt: new Date(row.created_at).toISOString(),
     settledAt: row.settled_at ? new Date(row.settled_at).toISOString() : null,
     bidCount: row.status === "open" ? maxima.length : Number(row.bid_count),
@@ -128,6 +129,7 @@ const toOffer = (row: any, userId: string | null) => {
           paymentSeen: GROUP_STATES.includes(row.my_status) && row.payment_seen_at != null,
           paymentError: row.payment_error,
           disputeReason: row.my_dispute_reason,
+          reportedAt: row.my_reported_at ? new Date(row.my_reported_at).toISOString() : null,
         },
   };
 };
@@ -136,6 +138,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
   const status = filters.status === "all" || ["sold", "unsold"].includes(filters.status ?? "") ? filters.status! : "open";
   const rows = await sql`
     SELECT s.*, u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at, u.kind AS seller_kind,
+      u.reputation AS seller_reputation,
       COALESCE((SELECT json_agg(f.funded ORDER BY f.created_at) FROM (
         SELECT b.created_at, LEAST(b.max_price, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
                                  WHERE p.bid_id = b.id AND p.status = 'active'), 0)) AS funded
@@ -154,7 +157,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
       (SELECT count(*) FROM buy_offers b WHERE b.sell_offer_id = s.id AND b.status = 'pledged') AS pledged_count,
       f.name AS file_name, f.size AS file_size,
       my.id AS my_id, my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount,
-      my.dispute_reason AS my_dispute_reason,
+      my.dispute_reason AS my_dispute_reason, my.reported_at AS my_reported_at,
       (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = my.id AND p.status IN ('active', 'used')) AS my_credited,
       (SELECT sum(p.satoshis) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
          AND my.status NOT IN ('open', 'won', 'pledged')) AS my_refundable

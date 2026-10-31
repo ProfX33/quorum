@@ -199,6 +199,17 @@ export async function migrate() {
     )`;
   await sql`CREATE INDEX IF NOT EXISTS deal_files_offer ON deal_files (offer_id, created_at)`;
 
+  // Reputation of a seller, 0 to 10 (see reputation.ts). An offer adds to it once, when a buyer
+  // confirms receipt, or halves it once, when a buyer reports the seller.
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS reputation integer NOT NULL DEFAULT 0 CHECK (reputation BETWEEN 0 AND 10)`;
+  await sql`
+    ALTER TABLE sell_offers
+      ADD COLUMN IF NOT EXISTS reputation_awarded_at timestamptz,
+      ADD COLUMN IF NOT EXISTS reported_at timestamptz`;
+  await sql`ALTER TABLE buy_offers ADD COLUMN IF NOT EXISTS reported_at timestamptz`;
+
   // Pledges are signed while bidding, so an open offer needs its group payment key already.
   await sql`
     UPDATE sell_offers SET

@@ -13,6 +13,7 @@ import {
   spentBy,
   txUrl,
 } from "./payments.ts";
+import { rewardSale } from "./reputation.ts";
 import { denominations, findPaymentGroup, pickDenominations } from "./settlement.ts";
 
 // The payment group pays the seller in one transaction, so the seller is paid the full price
@@ -548,11 +549,13 @@ export async function confirmReceipt(buyerId: string, bidId: string, ok: unknown
   const status = ok === true ? "received"
     : bid.kind === "data" && bid.delivery_attempts < MAX_DELIVERY_ATTEMPTS ? "paid"
     : "disputed";
-  await sql`
+  const updated = await sql`
     UPDATE buy_offers SET status = ${status},
       received_at = ${status === "received" ? new Date() : null},
       wrapped_key = ${status === "paid" ? null : bid.wrapped_key},
       dispute_reason = ${ok === true ? null : why}
-    WHERE id = ${bidId} AND status = ${bid.status}`;
+    WHERE id = ${bidId} AND status = ${bid.status}
+    RETURNING id`;
+  if (status === "received" && updated.length > 0) await rewardSale(bid.sell_offer_id);
   return { status };
 }

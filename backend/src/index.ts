@@ -61,6 +61,7 @@ import {
   userBids,
   userTransactions,
 } from "./profiles.ts";
+import { reportSeller } from "./reputation.ts";
 
 const port = Number(process.env.PORT ?? 5000);
 const hostname = process.env.HOST ?? "0.0.0.0"; // all interfaces, so the API is reachable on the local network
@@ -399,6 +400,17 @@ const server = Bun.serve({
         if (!isUuid(req.params.id)) return notFound();
         const { ok, reason } = await readBody(req);
         return reply(await confirmReceipt(user.id, req.params.id, ok, reason));
+      },
+    },
+
+    // Buyer reports that the seller did not hand over what they paid for: { reason }.
+    // Halves the seller's reputation (see reputation.ts).
+    "/api/bids/:id/report": {
+      POST: async (req) => {
+        const user = await userFromRequest(req);
+        if (!user) return unauthorized();
+        if (!isUuid(req.params.id)) return notFound();
+        return reply(await reportSeller(user.id, req.params.id, (await readBody(req)).reason));
       },
     },
 

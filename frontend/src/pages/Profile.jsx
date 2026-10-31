@@ -3,6 +3,7 @@ import { fetchProfile, removeAvatar, updateProfile, uploadAvatar } from '../api'
 import { Countdown, OfferCard, sats, useNow } from '../components/OfferCard';
 import Navbar from '../components/Navbar';
 import RequestCard from '../components/RequestCard';
+import Reputation from '../components/Reputation';
 import { Avatar, UserLink, displayName } from '../components/UserLink';
 
 const REFRESH_MS = 5000;
@@ -266,6 +267,10 @@ export default function Profile({ identityKey, user, onSignIn, onLogout, onUserC
                   <span className="badge badge-sm badge-outline">{person.kind}</span>
                   {own && <span className="badge badge-sm badge-primary">you</span>}
                 </h1>
+                <div className="mt-2 flex items-center gap-2 text-sm">
+                  <span className="text-white/70">Reputation</span>
+                  <Reputation value={person.reputation} size="lg" showValue />
+                </div>
                 <p className="mt-1 break-all font-mono text-xs text-white/70">{person.identityKey}</p>
                 <p className="mt-1 text-xs text-white/70">Member since {new Date(person.createdAt).toLocaleDateString()}</p>
                 {own && (
