@@ -4,7 +4,7 @@ import { canRefund } from '../delivery';
 import BidForm from './BidForm';
 import { BuyerDeal, SellerDeal } from './Deal';
 import Reputation from './Reputation';
-import { UserLink, profileHref, shortKey } from './UserLink';
+import { UserLink } from './UserLink';
 
 export { shortKey } from './UserLink';
 
@@ -122,9 +122,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-base-content/70">
         <dt>Seller</dt>
         <dd className="flex items-center gap-2 font-mono">
-          <a href={profileHref(offer.seller)} title={offer.seller} className="link link-hover">
-            {offer.mine ? 'you' : shortKey(offer.seller)}
-          </a>
+          <UserLink person={offer.sellerProfile} you={offer.mine} />
           <KindBadge kind={offer.sellerKind} />
           <Reputation value={offer.sellerReputation} size="xs" />
         </dd>

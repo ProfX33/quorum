@@ -3,6 +3,8 @@ import { logout, searchMarket } from '../api';
 import { Avatar, displayName, profileHref } from './UserLink';
 import { useTheme } from '../theme';
 
+const MARKET = 'M3 4h18l1 6H2l1-6z M4 10v10h16V10 M10 20v-5h4v5';
+
 const TABS = [
   ['offers', 'Offers', 'M3 12V4h8l10 10-8 8L3 12z M7.5 7.5h.01'],
   ['requests', 'Requests', 'M4 5h2l2.4 10.2a1 1 0 001 .8h8.2a1 1 0 001-.8L20 8H7 M10 20h.01 M17 20h.01'],
@@ -81,7 +83,11 @@ export default function Navbar({ user, onSignIn, onLogout, nav, counts }) {
             <span className="mt-2 hidden text-[0.62rem] uppercase tracking-[0.1em] text-base-content/40 lg:block">A group-buy market built on BSV</span>
           </a>
 
-          <nav className="order-last -mx-1 w-full min-w-0 overflow-x-auto lg:order-none lg:mx-0 lg:mt-8">
+          <nav className="order-last -mx-1 flex w-full min-w-0 gap-1 overflow-x-auto lg:order-none lg:mx-0 lg:mt-8 lg:flex-col lg:gap-2">
+            <a href="#/market" className="flex shrink-0 items-center gap-3 whitespace-nowrap rounded-field bg-primary px-3 py-2 text-sm text-primary-content transition hover:brightness-110 lg:py-2.5">
+              <Icon d={MARKET} />
+              Marketplace
+            </a>
             <ul role="tablist" className="flex gap-1 lg:flex-col">
               {TABS.map(([key, label, icon]) => {
                 const active = nav.activeTab === key;
