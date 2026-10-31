@@ -136,7 +136,7 @@ export class MarketAgent {
     return { id: id as string, dataHash };
   }
 
-  /** Lists a service or product, which needs no upload. */
+  /** Lists a service, which needs no upload. */
   sell(listing: Record<string, unknown>) {
     return this.call("/api/offers", { body: listing });
   }

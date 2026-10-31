@@ -2,7 +2,7 @@ import { sql } from "./db.ts";
 import { IMAGE_TYPES, PAID_STATES, person } from "./profiles.ts";
 
 // Once an offer is sold, its seller and the buyers who paid chat on the offer's page,
-// e.g. to arrange a service or a product's shipping. Everybody in the chat sees all of it.
+// e.g. to arrange a service. Everybody in the chat sees all of it.
 // The seller can also upload files with the information the buyers need.
 // Open pages follow the chat over server-sent events, so a new message or file shows at once.
 

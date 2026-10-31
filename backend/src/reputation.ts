@@ -1,6 +1,6 @@
 import { sql } from "./db.ts";
 
-// A seller's reputation, 0 to MAX_REPUTATION: how reliably they hand over what they sold.
+// A seller's reputation, 0 to MAX_REPUTATION, starting at 5: how reliably they hand over what they sold.
 // A sold offer adds one when a buyer confirms receipt; a buyer reporting that the seller did
 // not hand it over halves it, rounded down. Each offer counts once either way, so several
 // buyers of one offer neither multiply the reward nor the penalty, and a reported offer earns

@@ -5,7 +5,6 @@ import { encryptAndUpload } from '../delivery';
 const KINDS = [
   { value: 'data', label: 'Data', hint: 'A file, encrypted and delivered after payment' },
   { value: 'service', label: 'Service', hint: 'Work you perform for the buyer' },
-  { value: 'product', label: 'Product', hint: 'A physical or digital good' },
 ];
 
 export const CATEGORIES = [

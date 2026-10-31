@@ -1,6 +1,6 @@
 # Listing and request (marketplace)
 
-A seller lists an offer (data, a real-world service, or another product), or a buyer
+A seller lists an offer (data or a real-world service), or a buyer
 posts a request. Buyers state the maximum they would pay; at the deadline the price is
 split over a group of buyers who all can afford their share.
 

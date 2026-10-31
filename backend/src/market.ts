@@ -3,7 +3,7 @@ import { PLEDGE_FEE, derivationNonce, pledgeMiningFee, txUrl } from "./payments.
 import { person } from "./profiles.ts";
 import { type Bid, denominations, findPaymentGroup, projectBid, smallestJoiningBid } from "./settlement.ts";
 
-export const KINDS = ["data", "service", "product"] as const;
+export const KINDS = ["data", "service"] as const;
 type Kind = (typeof KINDS)[number];
 
 const MAX_DEADLINE_MS = 365 * 24 * 60 * 60 * 1000;

@@ -95,7 +95,6 @@ export default function Market({ user, onSignIn, onLogout, nav }) {
                 <option value="">All types</option>
                 <option>data</option>
                 <option>service</option>
-                <option>product</option>
               </select>
               <input placeholder="Category" value={filters.category} onChange={setFilter('category')} className="input input-bordered w-36" />
               <input placeholder="Region" value={filters.region} onChange={setFilter('region')} className="input input-bordered w-36" />

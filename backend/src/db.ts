@@ -38,7 +38,7 @@ export async function migrate() {
     CREATE TABLE IF NOT EXISTS sell_offers (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       seller_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      kind text NOT NULL DEFAULT 'data' CHECK (kind IN ('data', 'service', 'product')),
+      kind text NOT NULL DEFAULT 'data' CHECK (kind IN ('data', 'service')),
       category text NOT NULL,
       region text NOT NULL,
       name text NOT NULL,
@@ -61,7 +61,7 @@ export async function migrate() {
       buyer_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       sell_offer_id uuid REFERENCES sell_offers(id) ON DELETE CASCADE,
       max_price bigint NOT NULL CHECK (max_price > 0),
-      kind text CHECK (kind IN ('data', 'service', 'product')),
+      kind text CHECK (kind IN ('data', 'service')),
       category text,
       region text,
       name text,
@@ -199,11 +199,12 @@ export async function migrate() {
     )`;
   await sql`CREATE INDEX IF NOT EXISTS deal_files_offer ON deal_files (offer_id, created_at)`;
 
-  // Reputation of a seller, 0 to 10 (see reputation.ts). An offer adds to it once, when a buyer
-  // confirms receipt, or halves it once, when a buyer reports the seller.
+  // Reputation of a seller, 0 to 10, starting at 5 (see reputation.ts). An offer adds to it once,
+  // when a buyer confirms receipt, or halves it once, when a buyer reports the seller.
   await sql`
     ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS reputation integer NOT NULL DEFAULT 0 CHECK (reputation BETWEEN 0 AND 10)`;
+      ADD COLUMN IF NOT EXISTS reputation integer NOT NULL DEFAULT 5 CHECK (reputation BETWEEN 0 AND 10)`;
+  await sql`ALTER TABLE users ALTER COLUMN reputation SET DEFAULT 5`;
   await sql`
     ALTER TABLE sell_offers
       ADD COLUMN IF NOT EXISTS reputation_awarded_at timestamptz,
