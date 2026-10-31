@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchProfile, removeAvatar, updateProfile, uploadAvatar } from '../api';
+import { fetchExposure, fetchProfile, removeAvatar, updateProfile, uploadAvatar } from '../api';
 import { Countdown, OfferCard, sats, useNow } from '../components/OfferCard';
 import Navbar from '../components/Navbar';
 import RequestCard from '../components/RequestCard';
@@ -11,8 +11,8 @@ const AVATAR_PX = 256;
 
 const BID_LABEL = {
   open: 'Open',
-  won: 'Won, pledge due',
-  pledged: 'Pledged',
+  won: 'In payment group',
+  pledged: 'In payment group',
   lost: 'Not in payment group',
   expired: 'Expired',
   paid: 'Paid',
@@ -127,6 +127,28 @@ function OfferLink({ offer }) {
   return <a href={`#/offers/${offer.id}`} className="link link-hover font-medium">{offer.name}</a>;
 }
 
+/** What the user's pledges hold across all bids; other people's stay private. */
+function PledgeSummary() {
+  const [exposure, setExposure] = useState(null);
+
+  useEffect(() => {
+    const load = () => fetchExposure().then(setExposure, () => {});
+    load();
+    const t = setInterval(load, REFRESH_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!exposure || exposure.locked + exposure.refundable === 0) return null;
+  return (
+    <div role="alert" className="alert alert-soft alert-info mb-4 text-sm">
+      <span>
+        {exposure.locked > 0 && <><strong>{sats(exposure.locked)}</strong> pledged behind your bids, fees included. They stay on your wallet's own key until the group pays. </>}
+        {exposure.refundable > 0 && <><strong>{sats(exposure.refundable - exposure.refundFee)}</strong> on the way back to your wallet, after {sats(exposure.refundFee)} in network fees.</>}
+      </span>
+    </div>
+  );
+}
+
 function BidsTable({ bids, own, now }) {
   return (
     <div className="overflow-x-auto">
@@ -194,6 +216,7 @@ function TransactionsTable({ transactions }) {
               </td>
               <td className={`text-right tabular-nums ${t.role === 'sale' ? 'text-success' : ''}`}>
                 {t.role === 'sale' ? '+' : '−'}{sats(t.amount)}
+                {t.fees > 0 && <div className="text-xs text-base-content/60">plus {sats(t.fees)} fees</div>}
               </td>
               <td>
                 <TxLink {...t} />
@@ -316,7 +339,7 @@ export default function Profile({ identityKey, user, onSignIn, onLogout, onUserC
             {tab === 'requests' &&
               data.requests.map((r) => <RequestCard key={r.id} request={r} user={user} now={now} onChange={load} />)}
             {tab === 'bids' && data.bids.length > 0 && (
-              <section className="card card-border bg-base-200"><div className="card-body p-4"><BidsTable bids={data.bids} own={own} now={now} /></div></section>
+              <section className="card card-border bg-base-200"><div className="card-body p-4">{own && <PledgeSummary />}<BidsTable bids={data.bids} own={own} now={now} /></div></section>
             )}
             {tab === 'transactions' && data.transactions.length > 0 && (
               <section className="card card-border bg-base-200"><div className="card-body p-4"><TransactionsTable transactions={data.transactions} /></div></section>

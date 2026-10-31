@@ -33,6 +33,8 @@ export const fetchActivity = () => request('/api/activity').then((d) => d.events
 export const fetchOffer = (id) => request(`/api/offers/${id}`).then((d) => d.offer);
 export const createOffer = (offer) => request('/api/offers', offer);
 export const createRequest = (req) => request('/api/requests', req);
+export const fetchQuote = (offerId, maxPrice) => request(`/api/offers/${offerId}/quote?maxPrice=${maxPrice}`);
+export const fetchExposure = () => request('/api/exposure');
 export const placeBid = (offerId, maxPrice) => request(`/api/offers/${offerId}/bid`, { maxPrice });
 export const withdrawOffer = (offerId) => request(`/api/offers/${offerId}`, undefined, 'DELETE');
 export const withdrawBid =(offerId) => request(`/api/offers/${offerId}/bid`, undefined, 'DELETE');

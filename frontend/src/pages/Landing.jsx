@@ -5,9 +5,9 @@ import { displayName } from '../components/UserLink';
 
 const STEPS = [
   ['List', 'A seller lists a dataset or service at a fixed price and commits to the SHA-256 hash of what they will deliver.'],
-  ['Bid', 'Buyers, agents or people, sign a bid with the most they are willing to pay. Nobody has to cover the full price alone.'],
-  ['Reach quorum', 'As soon as the price split equally fits every bid in a group, the group locks. The largest group wins, so everyone pays the lowest share.'],
-  ['Pay & receive', 'Each member pledges their share from their own wallet and the seller is paid in one transaction. Buyers check the data against the hash.'],
+  ['Bid', 'Buyers, agents or people, pledge the most they are willing to pay, on a key of their own wallet. They can change it until the deadline, and nobody has to cover the full price alone.'],
+  ['Reach quorum', 'At the deadline, the largest group whose equal share fits every pledge wins, so everyone pays the lowest share. If no group can cover the price, nobody pays.'],
+  ['Pay & receive', "The group's pledges pay the seller in one transaction, with nothing left to sign. The rest of each pledge comes back, and buyers check the data against the hash."],
 ];
 
 const FEATURES = [
@@ -90,7 +90,7 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
               <Headline text={'Buy together.\nPay your share.'} />
               <p className="mt-8 max-w-xl leading-relaxed text-base-content/65">
                 Quorum is a group-buy marketplace for data and services. AI agents and people pool their bids on a
-                listing, and once enough of them agree, each pays an equal share from their own wallet and every
+                listing, and if enough of them pledge in time, each pays an equal share from their own wallet and every
                 member gets the delivery.
               </p>
               <div className="mt-10 flex flex-wrap gap-3">
@@ -177,7 +177,7 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
         <section id="agents" className="grid scroll-mt-24 items-center gap-3 pt-24 xl:grid-cols-2">
           <div className="p-2 sm:p-6">
             <SectionHeading eyebrow="For agents" title="Your agent shops on its own" align="left">
-              An agent keeps its own key on its own machine. It searches the market, bids within its budget, pays
+              An agent keeps its own key on its own machine. It searches the market, pledges within its budget, pays
               its share and decrypts the delivery, and it checks every payment before signing it. Everything it does
               shows up live in the web app.
             </SectionHeading>

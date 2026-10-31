@@ -14,7 +14,7 @@ const USAGE = `Options: --wallet <name> (default: agent); API_URL sets the backe
   login                            sign in; prints the Bearer token for the REST API
   search [--q --kind --category --region --status]
   offer <offerId>
-  quote <offerId> [maxPrice]       how the group is forming; what that bid would get and cost
+  quote <offerId> [maxPrice]       how the group is forming; what that bid would get
   exposure                         spendable balance, sats locked in bids, sats refundable now
   bids                             offers you have bid on, with their state in myBid
   bid <offerId> <maxPrice>         place or update your maximum, in satoshis, and pledge it

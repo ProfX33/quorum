@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { placeBid, withdrawBid, withdrawOffer } from '../api';
-import { canRefund, payForBid } from '../delivery';
+import { withdrawOffer } from '../api';
+import { canRefund } from '../delivery';
+import BidForm from './BidForm';
 import { BuyerDeal, SellerDeal } from './Deal';
 import Reputation from './Reputation';
 import { UserLink, profileHref, shortKey } from './UserLink';
@@ -79,7 +80,6 @@ const BIDDERS_ON_CARD = 6;
 const fileSize = (n) => (n < 1024 * 1024 ? `${Math.ceil(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false }) {
-  const [maxPrice, setMaxPrice] = useState(offer.myBid?.maxPrice ?? '');
   const [error, setError] = useState('');
   const [composing, setComposing] = useState(false);
   const open = offer.status === 'open' && new Date(offer.deadline).getTime() > now;
@@ -89,7 +89,6 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
     try {
       await action();
       onChange();
-      return true;
     } catch (e) {
       setError(e.message);
     }
@@ -194,12 +193,14 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
         <div role="alert" className="alert alert-soft alert-info text-sm">
           <span>
             Your max: {sats(offer.myBid.maxPrice)}
-            {offer.myBid.status === 'lost' && ` — ${STATUS_LABEL.lost}`}
+            {offer.myBid.status === 'open' && ` · pledged: ${sats(offer.myBid.pledged)}`}
+            {offer.myBid.status === 'open' && !open && ' — bidding has ended, the group is being formed'}
+            {offer.myBid.status === 'lost' && ` — ${offer.status === 'open' ? 'Withdrawn' : STATUS_LABEL.lost}`}
           </span>
         </div>
       )}
       {/* A lost bid can still hold pledges from before the group failed. */}
-      {offer.myBid && ((offer.myBid.status === 'open' && open) || !['open', 'lost'].includes(offer.myBid.status) || (offer.myBid.status === 'lost' && canRefund(offer.myBid))) && (
+      {offer.myBid && ((offer.myBid.status === 'open' && open) || !['open', 'lost'].includes(offer.myBid.status) || (offer.myBid.status === 'lost' && (canRefund(offer.myBid) || offer.myBid.statement.pledged > 0))) && (
         <BuyerDeal offer={offer} now={now} onChange={onChange} />
       )}
       {offer.mine && offer.sales && <SellerDeal offer={offer} />}
@@ -235,46 +236,7 @@ export function OfferCard({ offer, user, now, onChange, onSignIn, linked = false
         </button>
       )}
       {user && !offer.mine && open && (offer.myBid || composing) && (
-        <form
-          className="join flex-wrap"
-          onSubmit={(e) => {
-            e.preventDefault();
-            // Only pledged money counts, so the wallet is asked right away; a refused prompt leaves the bid to fund later.
-            run(async () => {
-              const { id } = await placeBid(offer.id, Number(maxPrice));
-              const pledged = offer.myBid?.pledged ?? 0;
-              if (Number(maxPrice) > pledged) await payForBid(id, Number(maxPrice));
-            }).then((ok) => ok && setComposing(false));
-          }}
-        >
-          <input
-            required
-            type="number"
-            min={1}
-            step={1}
-            placeholder="Max. you pay (sats)"
-            value={maxPrice}
-            onChange={(e) => setMaxPrice(e.target.value)}
-            className="input input-bordered input-sm join-item w-44"
-          />
-          <button className="btn btn-primary btn-sm join-item">
-            {offer.myBid ? 'Update and pledge' : 'Bid and pledge'}
-          </button>
-          {!offer.myBid && (
-            <button type="button" onClick={() => setComposing(false)} className="btn btn-ghost btn-sm join-item">
-              Cancel
-            </button>
-          )}
-          {offer.myBid?.status === 'open' && (
-            <button
-              type="button"
-              onClick={() => run(() => withdrawBid(offer.id))}
-              className="btn btn-ghost btn-sm join-item"
-            >
-              Withdraw
-            </button>
-          )}
-        </form>
+        <BidForm offer={offer} onChange={onChange} onCancel={() => setComposing(false)} />
       )}
       {error && <div role="alert" className="alert alert-error alert-soft text-sm"><span>{error}</span></div>}
       </div>

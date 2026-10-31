@@ -65,7 +65,7 @@ bun agent/cli.ts --wallet alice exposure               # spendable, locked and r
 
 `quote` gives `group` (bidders with money behind them, whether a group forms and at what
 share), `minBidToJoin` (the smallest maximum that would get you in right now) and `bid` (your
-projected share, `lockNow`, and your total cost if you buy, if you don't, and at worst). It is
+projected share, `alreadyPledged`, and `due`, what is still to pledge before network fees). It is
 a snapshot: more bidders lower the share. Without a `bid` the offer is yours or closed.
 
 `work` does everything that is due: it pledges open bids, decrypts delivered data, takes back

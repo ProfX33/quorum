@@ -1,8 +1,8 @@
 import { sql } from "./db.ts";
-import { PLEDGE_FEE, derivationNonce, pledgeMiningFee, txUrl } from "./payments.ts";
+import { PLEDGE_FEE, derivationNonce, txUrl } from "./payments.ts";
 import { DELIVERY_GRACE_MS } from "./reputation.ts";
 import { person } from "./profiles.ts";
-import { type Bid, denominations, findPaymentGroup, projectBid, smallestJoiningBid } from "./settlement.ts";
+import { type Bid, findPaymentGroup, projectBid, smallestJoiningBid } from "./settlement.ts";
 
 export const KINDS = ["data", "service"] as const;
 type Kind = (typeof KINDS)[number];
@@ -70,6 +70,25 @@ const exact = (v: string | null | undefined) => (v?.trim() ? v.trim() : null);
 
 // ---------- Sell offers ----------
 
+/**
+ * Where a bid's pledges went, in satoshis as they are on-chain: `pledged` always equals
+ * `toSeller` + `fees` + `back`, and `returned` is the part of `back` already in the wallet.
+ * The wallet's own mining fee for the pledge transaction comes on top. Spent pledges are left out.
+ */
+function pledgeStatement(row: any) {
+  const p = typeof row.my_pledges === "string" ? JSON.parse(row.my_pledges) : row.my_pledges;
+  const pledged = Number(p.satoshis);
+  const toSeller = Number(p.used_satoshis) - Number(p.used_outputs) * PLEDGE_FEE;
+  const fees = Number(p.outputs) * PLEDGE_FEE;
+  return {
+    pledged,
+    toSeller,
+    fees,
+    back: pledged - toSeller - fees,
+    returned: Number(p.refunded_satoshis) - Number(p.refunded_outputs) * PLEDGE_FEE,
+  };
+}
+
 const toOffer = (row: any, userId: string | null) => {
   const price = Number(row.price);
   const maxima: number[] = (typeof row.bid_maxima === "string" ? JSON.parse(row.bid_maxima) : row.bid_maxima).map(Number);
@@ -124,6 +143,7 @@ const toOffer = (row: any, userId: string | null) => {
           amount: row.my_amount == null ? null : Number(row.my_amount),
           // What the buyer's pledges count towards the share, and what they can take back.
           pledged: Number(row.my_credited ?? 0),
+          statement: pledgeStatement(row),
           refundable: Number(row.my_refundable ?? 0),
           refundFee: Number(row.my_refund_outputs ?? 0) * PLEDGE_FEE,
           txid: GROUP_STATES.includes(row.my_status) ? row.payment_txid : null,
@@ -166,6 +186,13 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
       my.id AS my_id, my.max_price AS my_max_price, my.status AS my_status, my.amount AS my_amount,
       my.dispute_reason AS my_dispute_reason, my.reported_at AS my_reported_at, my.wrapped_key IS NOT NULL AS my_has_key,
       (SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p WHERE p.bid_id = my.id AND p.status IN ('active', 'used')) AS my_credited,
+      (SELECT json_build_object(
+          'satoshis', COALESCE(sum(p.satoshis), 0), 'outputs', count(*),
+          'used_satoshis', COALESCE(sum(p.satoshis) FILTER (WHERE p.status = 'used'), 0),
+          'used_outputs', count(*) FILTER (WHERE p.status = 'used'),
+          'refunded_satoshis', COALESCE(sum(p.satoshis) FILTER (WHERE p.status = 'refunded'), 0),
+          'refunded_outputs', count(*) FILTER (WHERE p.status = 'refunded'))
+        FROM pledges p WHERE p.bid_id = my.id AND p.status <> 'spent') AS my_pledges,
       (SELECT sum(p.satoshis) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
          AND NOT (my.status IN ('open', 'won', 'pledged') OR (my.status = 'paid' AND s.payment_seen_at IS NULL))) AS my_refundable,
       (SELECT count(*) FROM pledges p WHERE p.bid_id = my.id AND p.status = 'active'
@@ -189,7 +216,7 @@ export async function listOffers(filters: Filters, userId: string | null, id: st
 
 /**
  * How the group of an offer is forming, and, for `maxPriceParam` or else the caller's own
- * maximum, what that bid would get if bidding closed now and what it would cost in fees.
+ * maximum, what that bid would get if bidding closed now and what is still to pledge for it.
  * Maxima stay private, but funded amounts do not: pledges are public on-chain anyway.
  */
 export async function quoteOffer(offerId: string, userId: string | null, maxPriceParam: string | null) {
@@ -202,20 +229,22 @@ export async function quoteOffer(offerId: string, userId: string | null, maxPric
   const open = offer.status === "open" && offer.running;
 
   const rows = await sql`
-    SELECT b.buyer_id, b.max_price,
-      COALESCE(sum(p.satoshis - ${PLEDGE_FEE}), 0) AS credited, count(p.id)::int AS outputs
+    SELECT b.buyer_id, b.max_price, b.status,
+      COALESCE(sum(p.satoshis - ${PLEDGE_FEE}), 0) AS credited
     FROM buy_offers b LEFT JOIN pledges p ON p.bid_id = b.id AND p.status = 'active'
-    WHERE b.sell_offer_id = ${offerId} AND b.status = 'open'
+    WHERE b.sell_offer_id = ${offerId} AND (b.status = 'open' OR b.buyer_id = ${userId}::uuid)
     GROUP BY b.id`;
-  const bids = (rows as any[]).map((b) => ({
+  const all = (rows as any[]).map((b) => ({
     buyerId: b.buyer_id as string,
+    open: b.status === "open",
     maxPrice: Number(b.max_price),
     credited: Number(b.credited),
-    outputs: b.outputs as number,
     funded: Math.min(Number(b.max_price), Number(b.credited)),
   }));
+  // The caller's bid may be withdrawn: out of the group, but its pledges count if they come back.
+  const mine = all.find((b) => b.buyerId === userId);
+  const bids = all.filter((b) => b.open);
   const funded = bids.filter((b) => b.funded > 0);
-  const mine = bids.find((b) => b.buyerId === userId);
   const others = funded.filter((b) => b !== mine).map((b) => b.funded);
   const group = findPaymentGroup(price, funded.map((b, i) => ({ id: String(i), maxPrice: b.funded })));
 
@@ -241,14 +270,9 @@ export async function quoteOffer(offerId: string, userId: string | null, maxPric
     minBidToJoin: open ? smallestJoiningBid(price, others) : null,
   };
 
-  const candidate = maxPrice ?? mine?.maxPrice ?? null;
+  const candidate = maxPrice ?? (mine?.open ? mine.maxPrice : null);
   if (!open || candidate === null || offer.seller_id === userId) return { ...quote, bid: null };
   const credited = mine?.credited ?? 0;
-  const due = Math.max(0, candidate - credited);
-  const newOutputs = due > 0 ? denominations(due).length : 0;
-  const miningFee = newOutputs > 0 ? pledgeMiningFee(newOutputs) : 0;
-  // Every output costs its fee contribution whether it pays the share or comes back in a refund.
-  const fees = ((mine?.outputs ?? 0) + newOutputs) * PLEDGE_FEE + miningFee;
   const outcome = projectBid(price, others, candidate);
   return {
     ...quote,
@@ -256,14 +280,9 @@ export async function quoteOffer(offerId: string, userId: string | null, maxPric
       maxPrice: candidate,
       ...outcome,
       share: outcome.inGroup ? outcome.share : null,
-      // What leaves the wallet if this bid is placed now.
-      lockNow: due + newOutputs * PLEDGE_FEE + miningFee,
       alreadyPledged: credited,
-      fees,
-      // Shares can rise up to the maximum if a member of the group drops out.
-      costAtShare: outcome.inGroup ? outcome.share! + fees : null,
-      costIfNotBought: fees,
-      maxCost: candidate + fees,
+      // What is still to pledge for this maximum, before network fees.
+      due: Math.max(0, candidate - credited),
     },
   };
 }
@@ -320,10 +339,12 @@ export async function placeBid(buyerId: string, offerId: string, maxPrice: unkno
     INSERT INTO buy_offers (buyer_id, sell_offer_id, max_price)
     SELECT ${buyerId}, s.id, ${maxPrice} FROM sell_offers s
     WHERE s.id = ${offerId} AND s.status = 'open' AND s.deadline > now() AND s.seller_id <> ${buyerId}
+    FOR SHARE OF s
     ON CONFLICT (sell_offer_id, buyer_id) WHERE sell_offer_id IS NOT NULL
       DO UPDATE SET max_price = EXCLUDED.max_price, status = 'open'
-    RETURNING id`;
-  return row ? { id: row.id as string } : { error: "Offer is closed, unknown, or your own" };
+    RETURNING id, COALESCE((SELECT sum(p.satoshis - ${PLEDGE_FEE}) FROM pledges p
+                            WHERE p.bid_id = buy_offers.id AND p.status = 'active'), 0) AS pledged`;
+  return row ? { id: row.id as string, pledged: Number(row.pledged) } : { error: "Offer is closed, unknown, or your own" };
 }
 
 /** A bid that pledged stays on record, as lost, so its pledges can be taken back. */
@@ -485,7 +506,7 @@ export async function listActivity() {
       FROM sell_offers s JOIN users u ON u.id = s.seller_id
       WHERE s.settled_at IS NOT NULL
       UNION ALL
-      SELECT 'pledge', min(p.created_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis)::bigint, p.txid
+      SELECT 'pledge', min(p.created_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis - ${PLEDGE_FEE})::bigint, p.txid
       FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
       JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE p.status <> 'spent'
@@ -503,7 +524,7 @@ export async function listActivity() {
       FROM buy_offers b JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE b.received_at IS NOT NULL
       UNION ALL
-      SELECT 'refund', max(p.refunded_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis)::bigint, p.refund_txid
+      SELECT 'refund', max(p.refunded_at), s.id, s.name, u.identity_key, u.kind, sum(p.satoshis - ${PLEDGE_FEE})::bigint, p.refund_txid
       FROM pledges p JOIN buy_offers b ON b.id = p.bid_id
       JOIN sell_offers s ON s.id = b.sell_offer_id JOIN users u ON u.id = b.buyer_id
       WHERE p.refunded_at IS NOT NULL

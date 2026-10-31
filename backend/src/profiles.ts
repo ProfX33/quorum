@@ -1,5 +1,5 @@
 import { sql } from "./db.ts";
-import { txUrl } from "./payments.ts";
+import { PLEDGE_FEE, txUrl } from "./payments.ts";
 
 // Profiles are public and addressed by identity key: anybody can see a user's name,
 // picture, offers, requests, bids and transactions. Bid maxima stay private to the bidder.
@@ -136,6 +136,7 @@ export async function userTransactions(userId: string) {
       LIMIT 200`,
     sql`
       SELECT s.id AS offer_id, s.name, s.kind, b.amount, s.payment_txid, s.payment_seen_at, s.paid_at,
+        (SELECT count(*) * ${PLEDGE_FEE} FROM pledges p WHERE p.bid_id = b.id AND p.status <> 'spent') AS fees,
         u.identity_key AS seller_key, u.display_name AS seller_name, u.avatar_updated_at AS seller_avatar_at
       FROM buy_offers b
       JOIN sell_offers s ON s.id = b.sell_offer_id
@@ -148,6 +149,8 @@ export async function userTransactions(userId: string) {
     role,
     offer: { id: row.offer_id, name: row.name, kind: row.kind },
     amount: Number(row.amount),
+    // Fee contributions of all the buyer's pledge outputs, used or refunded; a sale has none.
+    fees: Number(row.fees ?? 0),
     txid: row.payment_txid,
     txUrl: txUrl(row.payment_txid),
     seen: row.payment_seen_at != null,

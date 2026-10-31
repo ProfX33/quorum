@@ -1,6 +1,6 @@
 import { Transaction, Utils } from "@bsv/sdk";
 import { AUTH_KEY_ID, AUTH_PROTOCOL } from "../src/auth.ts";
-import { PLEDGE_FEE, groupOutputs, paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
+import { groupOutputs, paymentLockingScript, pledgeLockingScript, refundTransaction, signPledge } from "../src/payments.ts";
 import { AgentWallet } from "./wallet.ts";
 
 // Everything the web app does for a signed-in user, for an agent without a browser: login,
@@ -82,7 +82,7 @@ export class MarketAgent {
     return this.call(`/api/offers/${id}`).then((d) => d.offer);
   }
 
-  /** How the offer's group is forming and what a bid of `maxPrice` (default: its own) would get and cost. */
+  /** how the offer's group is forming and what a bid of `maxPrice` (default: its own) would get. */
   quote(offerId: string, maxPrice?: number) {
     return this.call(`/api/offers/${offerId}/quote${maxPrice === undefined ? "" : `?maxPrice=${maxPrice}`}`);
   }
@@ -103,11 +103,13 @@ export class MarketAgent {
    */
   async bid(offerId: string, maxPrice: number) {
     const placed = await this.call(`/api/offers/${offerId}/bid`, { body: { maxPrice } });
-    const { myBid } = await this.offer(offerId);
-    return myBid.pledged < myBid.maxPrice ? { ...placed, ...(await this.pay(placed.id)) } : placed;
+    return placed.pledged < maxPrice ? { ...placed, ...(await this.pay(placed.id)) } : placed;
   }
 
-  withdrawBid(offerId: string) {
+  async withdrawBid(offerId: string) {
+    // A bid without a registered pledge is deleted, so an unregistered one must get in first.
+    const { myBid } = await this.offer(offerId);
+    if (myBid) await this.resumePledge(myBid.id);
     return this.call(`/api/offers/${offerId}/bid`, { method: "DELETE" });
   }
 
@@ -173,9 +175,9 @@ export class MarketAgent {
    * for outputs that pay the seller the price, and never locks more than its own maximum.
    */
   async pay(bidId: string) {
-    const pendingId = `pledge:${bidId}`;
-    const resumed = this.wallet.pending(pendingId);
-    if (resumed) return this.submitPledge(bidId, resumed.pledge, resumed.before);
+    // That pledge may have been for a lower maximum, so the rest can still be due.
+    const resumed = await this.resumePledge(bidId);
+    if (resumed && (resumed.status !== "open" || resumed.pledged >= resumed.amount)) return resumed;
 
     const req = await this.call(`/api/bids/${bidId}/payment`);
     const expected = await groupOutputs(req.seller, req.derivationPrefix, req.derivationSuffix, req.offerId, req.price);
@@ -183,7 +185,7 @@ export class MarketAgent {
       throw new Error("The group payment the server asked for does not pay the seller the price. Not signing it.");
     }
     const { myBid } = await this.offer(req.offerId);
-    const credit = req.outputs.reduce((sum: number, satoshis: number) => sum + satoshis - PLEDGE_FEE, 0);
+    const credit = req.outputs.reduce((sum: number, satoshis: number) => sum + satoshis - req.fee, 0);
     if (myBid?.id !== bidId || credit + myBid.pledged > myBid.maxPrice) {
       throw new Error(`The pledge of ${credit} sats is above this agent's maximum. Not signing it.`);
     }
@@ -195,8 +197,14 @@ export class MarketAgent {
       vout, unlockingScript: await signPledge(this.wallet.proto, req.keyID, req.groupOutputs, tx, vout),
     })));
     const pledge = { beef: Utils.toHex(tx.toAtomicBEEF()), pledges, keyID: req.keyID };
-    this.wallet.setPending(pendingId, { pledge, before });
+    this.wallet.setPending(`pledge:${bidId}`, { pledge, before });
     return this.submitPledge(bidId, pledge, before);
+  }
+
+  /** Resubmits a pledge signed earlier whose submission did not get through. */
+  private async resumePledge(bidId: string) {
+    const resumed = this.wallet.pending(`pledge:${bidId}`);
+    return resumed ? this.submitPledge(bidId, resumed.pledge, resumed.before) : null;
   }
 
   private async submitPledge(bidId: string, pledge: unknown, before: ReturnType<AgentWallet["snapshot"]>) {

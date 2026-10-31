@@ -20,6 +20,30 @@ function TxLink({ bid }) {
   );
 }
 
+/** Where the buyer's pledge went: the same satoshis the wallet and the chain show. */
+function PledgeStatement({ bid }) {
+  const { pledged, toSeller, fees, back, returned } = bid.statement;
+  const rows = [
+    ['Pledged, fees included', sats(pledged)],
+    ...(toSeller > 0 ? [['Your share, paid to the seller', `−${sats(toSeller)}`]] : []),
+    ['Network fees', `−${sats(fees)}`],
+    [returned >= back ? 'Back in your wallet' : 'Coming back to your wallet', sats(back)],
+  ];
+  return (
+    <div className="text-xs">
+      <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5">
+        {rows.map(([label, amount]) => (
+          <div key={label} className="contents">
+            <dt>{label}</dt>
+            <dd className="text-right tabular-nums">{amount}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-1 text-base-content/60">Your wallet shows a little more for the pledge: it also pays the miners for that transaction.</p>
+    </div>
+  );
+}
+
 /** What the buyer does: pledge while bidding, wait for the group, download (or take the pledge back). */
 export function BuyerDeal({ offer, now, onChange }) {
   const bid = offer.myBid;
@@ -43,7 +67,7 @@ export function BuyerDeal({ offer, now, onChange }) {
 
   // A pledge signed earlier whose submission did not get through is resubmitted, never pledged twice.
   useEffect(() => {
-    if (['open', 'defaulted', 'lost'].includes(bid.status) && hasPendingPayment(bid.id)) {
+    if (hasPendingPayment(bid.id)) {
       run('Registering your pledge…', () => resumePayment(bid.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,21 +100,32 @@ export function BuyerDeal({ offer, now, onChange }) {
   let body;
   if (bid.status === 'open') {
     const due = bid.maxPrice - bid.pledged;
-    if (due <= 0) {
+    if (due < 0) {
       body = (
         <span>
-          Your {sats(bid.pledged)} are pledged, so your bid counts. At the deadline the group pays by itself, you only pay your share
-          and take back the rest. The pledge stays yours until then: withdraw your bid to get it back.
+          Your bid counts up to your maximum of {sats(bid.maxPrice)}. You have pledged {sats(bid.pledged)}, so {sats(-due)} sit
+          above it. They can't be spent, and come back after the deadline, or sooner if you withdraw your bid and bid again.
+        </span>
+      );
+    } else if (due === 0) {
+      body = (
+        <span>
+          Your {sats(bid.pledged)} are pledged, so your bid counts. There is nothing left for you to do: at the deadline the group
+          pays by itself, you pay only your share and the rest comes back. Until then you can change your maximum, or withdraw
+          your bid to get the pledge back.
         </span>
       );
     } else {
       body = (
         <>
           <span>
-            Only pledged money counts at the deadline. Pledge <strong>{sats(due)}</strong> to back your maximum
-            (plus a small fee per output). You pay your share at most, and the pledge stays yours unless the group covers the price.
+            Only pledged money counts at the deadline.{' '}
+            {bid.pledged > 0
+              ? <>{sats(bid.pledged)} of your maximum are pledged and count. Pledge the other <strong>{sats(due)}</strong>, plus network fees, to back all of it.</>
+              : <>Pledge <strong>{sats(due)}</strong>, plus network fees, to back your maximum.</>}
+            {' '}You pay your share at most, and the pledge stays yours unless the group covers the price.
           </span>
-          <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => payForBid(bid.id, bid.maxPrice))} className="btn btn-primary btn-sm">
+          <button disabled={!!busy} onClick={() => run('Waiting for wallet…', () => payForBid(bid.id, bid.maxPrice, setBusy))} className="btn btn-primary btn-sm">
             {spinner}
             {busy || `Pledge ${sats(due)}`}
           </button>
@@ -100,25 +135,29 @@ export function BuyerDeal({ offer, now, onChange }) {
   } else if (bid.status === 'pledged') {
     body = (
       <span>
-        You are in the payment group for <strong>{sats(bid.amount)}</strong>. The payment is being built from the group's pledges, nothing more is needed from you.
+        You are in the payment group, your share is <strong>{sats(bid.amount)}</strong>. The payment is being built from the group's pledges, nothing more is needed from you.
       </span>
     );
   } else if (bid.status === 'defaulted') {
     body = (
       <>
-        <span>Your pledge was spent elsewhere, so you are out of the group. The others paid without you.</span>
+        <span>Your pledge was spent elsewhere, so you are out of the group and pay nothing. Anything still unused can be taken back.</span>
         {refundButton}
       </>
     );
   } else if (bid.status === 'lost') {
     body = (
       <>
-        <span>You are not in the payment group, so nothing was paid. Your pledge is yours to take back.</span>
+        <span>
+          {offer.status === 'open'
+            ? `You withdrew your bid, so your pledge no longer counts.${canRefund(bid) ? ' It goes back to your wallet by itself while you are signed in, less the network fee. If you bid again before that, it counts again.' : ''}`
+            : `${offer.status === 'unsold' ? 'The group did not reach the price' : 'Your bid did not reach the final share'}, so nothing went to the seller.${canRefund(bid) ? ' Your pledge goes back to your wallet by itself while you are signed in, less the network fee.' : ''}`}
+        </span>
         {refundButton}
       </>
     );
   } else if (bid.status === 'paid' && !bid.paymentSeen) {
-    body = <span>The whole group has pledged. Payment sent, waiting for the network to see it… <TxLink bid={bid} /></span>;
+    body = <span>Your share of {sats(bid.amount)} is in the group payment, waiting for the network to see it… Unused pledges come back after that. <TxLink bid={bid} /></span>;
   } else if (bid.status === 'paid' && offer.kind === 'data') {
     body = (
       <span>
@@ -188,12 +227,11 @@ export function BuyerDeal({ offer, now, onChange }) {
   return (
     <div className="grid gap-2">
       <div role="alert" className={`alert alert-soft text-sm ${tone} flex flex-wrap`}>{body}</div>
-      {leftover && (
-        <div role="alert" className="alert alert-soft alert-info flex flex-wrap text-sm">
-          <span>
-            You paid {sats(bid.amount)}. The rest of your pledge goes back to your wallet by itself while you are signed in, less the network fee.
-          </span>
-          {refundButton}
+      {!['open', 'pledged'].includes(bid.status) && bid.statement.pledged > 0 && (
+        <div className="alert alert-soft alert-info flex flex-wrap text-sm">
+          <PledgeStatement bid={bid} />
+          {leftover && <span>What is coming back returns by itself while you are signed in.</span>}
+          {leftover && refundButton}
         </div>
       )}
       {bid.paymentError && bid.status === 'pledged' && (

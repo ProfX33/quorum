@@ -42,9 +42,10 @@ const CONTENT = {
         reversed.
       </p>],
       ['4. Bids, groups and payment', <p>
-        A signed bid is a binding offer to pay up to the maximum you stated. When a group forms, each member owes an
-        equal share of the price, never more than their own bid. If a group does not complete, pledges are returned
-        less network and fee contributions as shown when you bid.
+        A bid is an offer to pay up to the maximum you stated, backed by a pledge from your wallet. You can change or
+        withdraw it until the deadline. From the deadline it is binding: if a group forms, each member pays an equal
+        share of the price, never more than their own bid, from their pledge. Unused pledges, and all pledges if no
+        group completes, can be taken back less network fees.
       </p>],
       ['5. Sellers', <p>
         Sellers warrant that they may lawfully sell what they list, that the delivered data matches the hash they

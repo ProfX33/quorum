@@ -382,5 +382,77 @@ console.log("\n# withdrawing");
   assert((await alice.call(`/api/bids/${unfunded.id}/payment`)).status === 409, "and nobody can pledge to it any more");
 }
 
+// ---------- 6. changing a bid ----------
+console.log("\n# changing a bid");
+{
+  const id = await list("e2e change", 8);
+  const a = await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 1000 } });
+  const firstPledge = await pledge(alice, a.id);
+
+  const lowered = await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 600 } });
+  assert(lowered.pledged === 1000, "placing a bid says what is pledged already");
+  let mine = (await alice.call(`/api/offers/${id}`)).offer;
+  assert(mine.myBid.maxPrice === 600 && mine.myBid.pledged === 1000, "lowering keeps the pledge in place");
+  assert(mine.share === null, "and only the new maximum counts, not the pledge");
+  assert((await alice.call(`/api/bids/${a.id}/payment`)).status === 409, "there is nothing more to pledge after lowering");
+  assert((await alice.call(`/api/bids/${a.id}/refund`)).status === 409, "the excess stays locked while the bid is open");
+
+  await alice.call(`/api/offers/${id}/bid`, { body: { maxPrice: 700 } });
+  assert((await alice.call(`/api/bids/${a.id}/payment`)).status === 409, "raising within the pledge needs no new money");
+  assert((await alice.call(`/api/offers/${id}/quote?maxPrice=1200`)).bid.due === 200, "raising past the pledge is quoted for the difference");
+  assert((await alice.call(`/api/offers/${id}/quote?maxPrice=1200`)).bid.alreadyPledged === 1000, "with what is pledged counted");
+  const b = await bob.call(`/api/offers/${id}/bid`, { body: { maxPrice: 500 } });
+  await pledge(bob, b.id);
+  const together = await alice.call(`/api/offers/${id}/quote?maxPrice=800`);
+  assert(together.group.size === 2 && together.group.share === 500, "the quote sees the other bidders' pledges");
+  assert(together.bid.inGroup && together.bid.share === 500 && together.bid.groupSize === 2, "and puts a changed bid in the group with them");
+  assert(together.minBidToJoin === 500, "and says what it takes to join");
+
+  // Bidding again after taking the pledge back starts from nothing.
+  assert((await bob.call(`/api/offers/${id}/bid`, { method: "DELETE" })).ok, "bob withdraws");
+  const withdrawn = await bob.call(`/api/offers/${id}/quote?maxPrice=500`);
+  assert(withdrawn.bid.alreadyPledged === 500 && withdrawn.bid.due === 0, "a withdrawn bid is quoted with the pledges it still holds");
+  assert((await bob.call(`/api/offers/${id}/quote`)).bid === null, "and has no bid of its own to quote");
+  const out = await refund(bob, b.id);
+  assert(out.txid === out.tx.id("hex"), "bob takes his pledge back");
+  const back = await bob.call(`/api/offers/${id}/bid`, { body: { maxPrice: 500 } });
+  assert(back.id === b.id && back.pledged === 0, "coming back after a refund, nothing is pledged");
+  assert((await bob.call(`/api/offers/${id}`)).offer.myBid.pledged === 0, "the refunded pledge no longer counts");
+  assert((await pledge(bob, b.id)).pledged === 500, "so bob pledges again, under a new key");
+
+  const paid = await waitFor(alice, id, (o) => o.myBid.paymentSeen);
+  assert(paid.myBid.amount === 500, "the group pays at the share, below the changed maximum");
+  assert(paid.myBid.refundable === 500 + (paid.myBid.refundFee), "alice's whole excess comes back");
+  const bobPaid = (await bob.call(`/api/offers/${id}`)).offer;
+  assert(bobPaid.myBid.amount === 500 && bobPaid.myBid.status === "paid", "bob pays with his new pledge");
+  const claim = await claimOf(id);
+  const onChain = groupPayment(claim);
+  assert(onChain.outputs[0]!.satoshis === 1000, "the seller gets the full price");
+
+  // What the buyer is told is what the transactions moved.
+  const st = paid.myBid.statement;
+  assert(st.pledged === st.toSeller + st.fees + st.back, "the statement adds up");
+  assert(st.toSeller === 500 && st.back === 500 && st.returned === 0, "alice sees her share and what comes back");
+  const firstTx = firstPledge.tx;
+  const aliceIn = onChain.inputs.filter((i) => i.sourceTransaction!.id("hex") === firstTx.id("hex"));
+  const aliceSats = aliceIn.reduce((sum, i) => sum + i.sourceTransaction!.outputs[i.sourceOutputIndex]!.satoshis!, 0);
+  assert(aliceSats === st.toSeller + aliceIn.length * PLEDGE_FEE, "her inputs to the payment are her share and their fees");
+  const taken = await refund(alice, a.id);
+  assert(taken.tx.outputs[0]!.satoshis === st.back, "her refund is exactly what the statement promised");
+  const after = (await alice.call(`/api/offers/${id}`)).offer.myBid.statement;
+  assert(after.returned === st.back && after.pledged === st.pledged && after.fees === st.fees, "and the statement stays the same afterwards");
+  const feed = (await alice.call("/api/activity")).events.find((e: any) => e.type === "refund" && e.txid === taken.txid);
+  assert(feed.satoshis === st.back, "the activity feed shows the refund as it arrived");
+  const bought = (await alice.call(`/api/users/${alice.identityKey}`)).transactions.find((t: any) => t.offer.id === id);
+  assert(bought.amount === st.toSeller && bought.fees === st.fees, "her purchase lists her share and her fees");
+
+  const low = await list("e2e lowered out", 4);
+  const c = await alice.call(`/api/offers/${low}/bid`, { body: { maxPrice: 1000 } });
+  await pledge(alice, c.id);
+  await alice.call(`/api/offers/${low}/bid`, { body: { maxPrice: 999 } });
+  const failed = await waitFor(alice, low, (o) => o.status !== "open");
+  assert(failed.status === "unsold" && failed.myBid.status === "lost", "a pledge above a lowered maximum pays nothing beyond it");
+}
+
 console.log("\nAll delivery checks passed.");
 process.exit(0);

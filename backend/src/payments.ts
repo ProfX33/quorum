@@ -40,8 +40,6 @@ export const GROUP_SCOPE =
   TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
 /** What every pledge input carries for the mining fee on top of the buyer's share. */
 export const PLEDGE_FEE = Number(process.env.PLEDGE_FEE_SATS ?? 30);
-/** Estimated mining fee of the transaction creating `outputs` pledge outputs, for one input and change. */
-export const pledgeMiningFee = (outputs: number) => Math.ceil(((10 + 148 + 34 * (outputs + 1)) * MINING_FEE_RATE) / 1000);
 /** Enough denominations for any bid; a transaction claiming more is not one of ours. */
 const MAX_PLEDGE_OUTPUTS = 64;
 

@@ -28,7 +28,6 @@ const BRC29_PROTOCOL = [2, '3241645161d8'];
 const ANYONE_KEY = new PrivateKey(1).toPublicKey().toString();
 const GROUP_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_ANYONECANPAY | TransactionSignature.SIGHASH_FORKID;
 const REFUND_SCOPE = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID;
-const PLEDGE_FEE = 30;
 
 const subtle = () => {
   if (!globalThis.crypto?.subtle) throw new Error('Encryption needs a secure page (https or localhost)');
@@ -197,19 +196,25 @@ export async function resumePayment(bidId) {
  * reaches the seller unless the group covers the price, and what the share does not need
  * stays the buyer's.
  */
-export async function payForBid(bidId, maxPrice) {
-  if (hasPendingPayment(bidId)) return resumePayment(bidId);
+export async function payForBid(bidId, maxPrice, onStep = () => {}) {
+  if (hasPendingPayment(bidId)) {
+    onStep('Registering your earlier pledge…');
+    // That pledge may have been for a lower maximum, so the rest can still be due.
+    const result = await resumePayment(bidId);
+    if (result.status !== 'open' || result.pledged >= maxPrice) return result;
+  }
   const req = await request(`/api/bids/${bidId}/payment`);
   // Never lock more than the buyer agreed to bid.
-  const credit = req.outputs.reduce((sum, satoshis) => sum + satoshis - PLEDGE_FEE, 0);
+  const credit = req.outputs.reduce((sum, satoshis) => sum + satoshis - req.fee, 0);
   if (credit + req.pledged > maxPrice) throw new Error('The server asked for more than your maximum. Not signing it.');
   // Never sign for a payment that does not give the seller the full price.
-  const [toSeller] = req.groupOutputs;
-  if (toSeller.satoshis !== req.price
+  const [toSeller, tag] = req.groupOutputs;
+  if (req.groupOutputs.length !== 2 || tag.satoshis !== 0 || toSeller.satoshis !== req.price
     || toSeller.lockingScript !== (await paymentLockingScript(req.seller, req.derivationPrefix, req.derivationSuffix))) {
     throw new Error('The group payment the server asked for does not pay the seller the price. Not signing it.');
   }
 
+  onStep('Approve the pledge in your wallet…');
   const wallet = getWallet();
   const lockingScript = await pledgeLockingScript(wallet, req.keyID);
   const { tx } = await wallet.createAction({
@@ -225,11 +230,13 @@ export async function payForBid(bidId, maxPrice) {
 
   const pledges = [];
   for (const vout of vouts) {
+    onStep(`Signing in your wallet (${pledges.length + 1} of ${vouts.length})…`);
     const group = buildTransaction(req.groupOutputs, [{ tx: pledgeTx, vout }]);
     pledges.push({ vout, unlockingScript: (await signWithPledgeKey(wallet, req.keyID, group, 0, GROUP_SCOPE)).toHex() });
   }
   const pledge = { beef: hex(tx), pledges, keyID: req.keyID };
   store.set(pendingPayment(bidId), JSON.stringify(pledge));
+  onStep('Registering your pledge…');
   return submitPledge(bidId, pledge);
 }
 
@@ -319,9 +326,8 @@ export function refundPledges(id) {
 const REFUND_RETRY_MS = 600_000;
 const refundFailedAt = new Map(); // bidId → time of the last failure
 
-const pendingRefundIds = () => {
+const pendingIds = (prefix) => {
   try {
-    const prefix = pendingRefund('');
     return Object.keys(localStorage).filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
   } catch {
     return [];
@@ -329,14 +335,18 @@ const pendingRefundIds = () => {
 };
 
 /**
- * Takes back what the buyer's bids no longer need, such as the part of a maximum above the
+ * Registers pledges whose submission did not get through, whatever became of their bid, then
+ * takes back what the buyer's bids no longer need, such as the part of a maximum above the
  * final share, and finishes refunds that were interrupted. A refused wallet prompt is not
  * repeated for a while. `notify(message, kind)` reports progress.
  */
 export async function runBuyerTasks(notify = () => {}) {
+  for (const id of pendingIds(pendingPayment(''))) {
+    await resumePayment(id).catch((e) => console.warn('Pledge not registered yet', e));
+  }
   const { bids } = await request('/api/exposure');
   const amounts = new Map(bids.filter((b) => b.refundable > 0).map((b) => [b.bidId, b.refundable - b.refundFee]));
-  for (const id of new Set([...amounts.keys(), ...pendingRefundIds()])) {
+  for (const id of new Set([...amounts.keys(), ...pendingIds(pendingRefund(''))])) {
     if (Date.now() - (refundFailedAt.get(id) ?? 0) < REFUND_RETRY_MS) continue;
     try {
       await refundPledges(id);
