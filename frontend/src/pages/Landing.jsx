@@ -83,29 +83,29 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
         <section className="grid gap-3 xl:grid-cols-[1.15fr_1fr]">
           <div className="panel relative flex flex-col justify-between gap-10 overflow-hidden p-6 sm:p-10">
             <div className="flex flex-wrap gap-2">
-              <span className="chip"><span className="dot text-accent" />Built on BSV</span>
-              <span className="chip"><span className="dot text-secondary" style={{ animationDelay: '1s' }} />Non-custodial</span>
+              <span className="chip"><span className="dot text-[#003FFF]" />Built on BSV</span>
+              <span className="chip"><span className="dot text-primary" style={{ animationDelay: '1s' }} />Non-custodial</span>
             </div>
             <div>
               <Headline text={'Buy together.\nPay your share.'} />
-              <p className="mt-8 max-w-xl leading-relaxed text-white/65">
+              <p className="mt-8 max-w-xl leading-relaxed text-base-content/65">
                 Quorum is a group-buy marketplace for data and services. AI agents and people pool their bids on a
                 listing, and once enough of them agree, each pays an equal share from their own wallet and every
                 member gets the delivery.
               </p>
               <div className="mt-10 flex flex-wrap gap-3">
                 {primaryCta}
-                <a href="#/market" className="btn btn-ghost btn-lg border-line bg-base-300 hover:border-white/30">Explore listings</a>
+                <a href="#/market" className="btn btn-ghost btn-lg border-line bg-base-300 hover:border-base-content/30">Explore listings</a>
               </div>
-              <p className="mt-6 text-xs uppercase tracking-[0.12em] text-white/40">
+              <p className="mt-6 text-xs uppercase tracking-[0.12em] text-base-content/40">
                 {user ? `Signed in as ${displayName(user)}.` : 'No accounts, no passwords. Your wallet is your identity.'}
               </p>
             </div>
           </div>
           <div className="panel bg-grid relative min-h-80 overflow-hidden">
-            <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(228,240,70,0.14),transparent_60%)]" />
-            <span className="chip absolute left-5 top-5 z-10"><span className="dot text-secondary" />Live match</span>
-            <span className="absolute right-5 top-5 z-10 font-mono text-xs text-white/35">4 / 5 bids fit</span>
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(242,92,5,0.12),transparent_60%)]" />
+            <span className="chip absolute left-5 top-5 z-10"><span className="dot text-primary" />Live match</span>
+            <span className="absolute right-5 top-5 z-10 font-mono text-xs text-base-content/35">4 / 5 bids fit</span>
             <div className="relative flex h-full items-center justify-center p-6 pt-16">
               <HeroArt />
             </div>
@@ -128,11 +128,11 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
           <ol className="mt-14 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {STEPS.map(([title, text], i) => (
               <li key={title} className="panel reveal group p-6 transition-colors hover:border-primary/40" style={{ '--delay': `${i * 90}ms` }}>
-                <span className="font-pixel text-5xl text-white/15 transition-colors group-hover:text-primary group-hover:text-glow">
+                <span className="font-pixel text-5xl text-base-content/15 transition-colors group-hover:text-primary group-hover:text-glow">
                   {String(i + 1).padStart(2, '0')}
                 </span>
                 <h3 className="mt-6 text-lg font-semibold">{title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-white/60">{text}</p>
+                <p className="mt-2 text-sm leading-relaxed text-base-content/60">{text}</p>
               </li>
             ))}
           </ol>
@@ -142,13 +142,13 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
             <div>
               <span className="chip">Worked example</span>
               <h3 className="mt-5 font-pixel text-3xl text-primary">One dataset, 2,000 sats, three bidders</h3>
-              <p className="mt-4 leading-relaxed text-white/65">
+              <p className="mt-4 leading-relaxed text-base-content/65">
                 Quorum looks for the largest group whose equal share fits every member's bid. Three buyers would pay
                 667 each, more than Agent C offered. Two buyers pay 1,000 each, which both A and B accept. The group
                 locks, and Agent C's bid stays open for the next round.
               </p>
               <p className="mt-6 rounded-field border border-line bg-base-100 px-4 py-3 font-mono text-sm text-secondary">
-                <span className="text-white/35">› </span>share = ⌈2,000 / 2⌉ = 1,000 sats
+                <span className="text-base-content/35">› </span>share = ⌈2,000 / 2⌉ = 1,000 sats
               </p>
             </div>
             <MatchChart />
@@ -161,13 +161,13 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
           <div className="mt-14 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {FEATURES.map(([title, text, icon], i) => (
               <div key={title} className="panel reveal group p-6 transition-colors hover:border-primary/40" style={{ '--delay': `${(i % 3) * 90}ms` }}>
-                <span className="flex h-11 w-11 items-center justify-center rounded-field border border-line bg-base-300 text-white/70 transition group-hover:border-primary/50 group-hover:text-primary">
+                <span className="flex h-11 w-11 items-center justify-center rounded-field border border-line bg-base-300 text-base-content/70 transition group-hover:border-primary/50 group-hover:text-primary">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
                     <path d={icon} />
                   </svg>
                 </span>
                 <h3 className="mt-5 font-semibold">{title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-white/60">{text}</p>
+                <p className="mt-2 text-sm leading-relaxed text-base-content/60">{text}</p>
               </div>
             ))}
           </div>
@@ -188,13 +188,13 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
               <span className="h-2.5 w-2.5 rounded-full bg-error/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-accent/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-secondary/80" />
-              <span className="ml-3 text-xs text-white/35">agent@quorum ~</span>
+              <span className="ml-3 text-xs text-base-content/35">agent@quorum ~</span>
             </div>
             <div className="space-y-2 p-5 font-mono text-sm sm:p-6">
               {TERMINAL.map(([prefix, line], i) => (
                 <div key={i} className="reveal flex gap-3" style={{ '--delay': `${300 + i * 450}ms` }}>
-                  <span className={prefix === '$' ? 'text-primary' : 'text-white/30'}>{prefix}</span>
-                  <code className={prefix === '$' ? 'text-white/85' : 'text-secondary'}>{line}</code>
+                  <span className={prefix === '$' ? 'text-primary' : 'text-base-content/30'}>{prefix}</span>
+                  <code className={prefix === '$' ? 'text-base-content/85' : 'text-secondary'}>{line}</code>
                 </div>
               ))}
               <div className="reveal flex gap-3" style={{ '--delay': `${300 + TERMINAL.length * 450}ms` }}>
@@ -211,14 +211,14 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
             {QUOTES.map(([quote, name, role], i) => (
               <figure key={name} className="panel reveal flex flex-col p-8" style={{ '--delay': `${i * 90}ms` }}>
                 <span aria-hidden className="font-pixel text-5xl leading-none text-primary">“</span>
-                <blockquote className="mt-3 flex-1 text-sm leading-relaxed text-white/80">{quote}</blockquote>
+                <blockquote className="mt-3 flex-1 text-sm leading-relaxed text-base-content/80">{quote}</blockquote>
                 <figcaption className="mt-8 flex items-center gap-3 border-t border-line pt-5">
                   <span className="flex h-10 w-10 items-center justify-center rounded-field border border-line bg-base-300 font-pixel text-lg text-primary">
                     {name[0]}
                   </span>
                   <span>
                     <span className="block text-sm font-medium">{name}</span>
-                    <span className="block text-xs text-white/45">{role}</span>
+                    <span className="block text-xs text-base-content/45">{role}</span>
                   </span>
                 </figcaption>
               </figure>
@@ -232,7 +232,7 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
             <div className="panel bg-grid reveal relative overflow-hidden px-6 py-20 text-center">
               <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-72 w-[36rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
               <h2 className="relative font-pixel text-4xl text-primary text-glow sm:text-6xl">Your wallet is your account</h2>
-              <p className="relative mx-auto mt-5 max-w-xl text-white/65">
+              <p className="relative mx-auto mt-5 max-w-xl text-base-content/65">
                 Sign in with a BSV wallet. Your account is created the first time you sign a challenge, with no email or password.
               </p>
               <div className="relative mt-10 flex justify-center">{primaryCta}</div>
@@ -244,9 +244,9 @@ export default function Landing({ user, onSignIn, onLogout, nav }) {
         <section id="contact" className="scroll-mt-24 pt-24">
           <div className="panel reveal grid gap-8 p-6 sm:p-10 md:grid-cols-[1fr_auto] md:items-center">
             <div>
-              <span className="chip"><span className="dot text-secondary" />Support online</span>
+              <span className="chip"><span className="dot text-primary" />Support online</span>
               <h2 className="mt-5 font-pixel text-3xl sm:text-4xl">Questions? Talk to us.</h2>
-              <p className="mt-3 text-white/60">
+              <p className="mt-3 text-base-content/60">
                 Listing your data, connecting an agent or need help with a deal? Our team is happy to help.
               </p>
             </div>
@@ -282,7 +282,7 @@ function SectionHeading({ eyebrow, title, children, align = 'center' }) {
     <div className={`reveal ${align === 'center' ? 'mx-auto max-w-2xl text-center' : ''}`}>
       <span className="chip"><span className="dot text-primary" />{eyebrow}</span>
       <h2 className="mt-5 font-pixel text-4xl leading-tight sm:text-5xl">{title}</h2>
-      {children && <p className="mt-5 leading-relaxed text-white/60">{children}</p>}
+      {children && <p className="mt-5 leading-relaxed text-base-content/60">{children}</p>}
     </div>
   );
 }
@@ -310,7 +310,7 @@ function SplitTile() {
           2,000
         </span>
       </div>
-      <p className="text-center text-xs uppercase tracking-[0.12em] text-white/40">
+      <p className="text-center text-xs uppercase tracking-[0.12em] text-base-content/40">
         <span className="group-hover:hidden group-focus:hidden">One price, too high alone</span>
         <span className="hidden text-primary group-hover:inline group-focus:inline">4 buyers × 500 sats each</span>
       </p>
@@ -340,12 +340,12 @@ function KeyTile() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8" /></svg>
         Keyboard input
       </span>
-      <div className="flex flex-1 items-center justify-center gap-4 font-pixel text-3xl text-white/25">
+      <div className="flex flex-1 items-center justify-center gap-4 font-pixel text-3xl text-base-content/25">
         Hit the
         <a href="#/market" onClick={() => setDown(true)} data-down={down} className="keycap text-2xl" aria-label="Open the marketplace">M</a>
         key
       </div>
-      <p className="text-center text-xs uppercase tracking-[0.12em] text-white/40">Jumps straight to the market</p>
+      <p className="text-center text-xs uppercase tracking-[0.12em] text-base-content/40">Jumps straight to the market</p>
     </div>
   );
 }
@@ -354,11 +354,11 @@ function FactsTile() {
   const facts = [['0', 'coins held by Quorum'], ['1', 'transaction pays the seller'], ['SHA-256', 'proof of every delivery']];
   return (
     <div className="panel flex min-h-64 flex-col p-5">
-      <span className="chip self-start"><span className="dot text-secondary" />By the numbers</span>
+      <span className="chip self-start"><span className="dot text-primary" />By the numbers</span>
       <dl className="mt-4 flex flex-1 flex-col justify-center divide-y divide-line">
         {facts.map(([value, label]) => (
           <div key={label} className="flex items-baseline justify-between gap-4 py-2.5">
-            <dt className="text-xs uppercase tracking-[0.1em] text-white/45">{label}</dt>
+            <dt className="text-xs uppercase tracking-[0.1em] text-base-content/45">{label}</dt>
             <dd className="font-pixel text-2xl text-primary">{value}</dd>
           </div>
         ))}
@@ -377,15 +377,15 @@ function MatchChart() {
         </div>
         {BIDS.map(([name, bid, inGroup], i) => (
           <div key={name} className="flex h-full w-16 flex-col justify-end">
-            <span className={`mb-1 text-center font-pixel text-base tabular-nums ${inGroup ? 'text-primary' : 'text-white/40'}`}>{bid.toLocaleString('en')}</span>
+            <span className={`mb-1 text-center font-pixel text-base tabular-nums ${inGroup ? 'text-primary' : 'text-base-content/40'}`}>{bid.toLocaleString('en')}</span>
             <div
-              className={`grow-up rounded-t-md ${inGroup ? 'bg-gradient-to-t from-primary/30 to-primary shadow-[0_0_30px_-8px] shadow-primary' : 'border border-dashed border-white/25 bg-white/5'}`}
+              className={`grow-up rounded-t-md ${inGroup ? 'bg-gradient-to-t from-primary/30 to-primary shadow-[0_0_30px_-8px] shadow-primary' : 'border border-dashed border-base-content/25 bg-base-content/5'}`}
               style={{ height: `${(bid / SCALE) * 100}%`, animationDelay: `${i * 150}ms` }}
             />
           </div>
         ))}
       </div>
-      <figcaption className="mt-3 flex justify-around px-4 text-xs uppercase tracking-[0.08em] text-white/50">
+      <figcaption className="mt-3 flex justify-around px-4 text-xs uppercase tracking-[0.08em] text-base-content/50">
         {BIDS.map(([name, , inGroup]) => (
           <span key={name} className="w-16 text-center">{name}<br /><span className={inGroup ? 'text-secondary' : ''}>{inGroup ? 'in group' : 'waits'}</span></span>
         ))}
@@ -411,12 +411,12 @@ function HeroArt() {
       <svg viewBox="0 0 480 420" className="w-full">
         <defs>
           <radialGradient id="core" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#E4F046" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#E4F046" stopOpacity="0" />
+            <stop offset="0%" stopColor="#F25C05" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#F25C05" stopOpacity="0" />
           </radialGradient>
           <linearGradient id="hex" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#F2F98A" />
-            <stop offset="100%" stopColor="#A8C61E" />
+            <stop offset="0%" stopColor="#FF9B5E" />
+            <stop offset="100%" stopColor="#E04A00" />
           </linearGradient>
           <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="4" result="b" />
@@ -426,22 +426,22 @@ function HeroArt() {
 
         {/* stars */}
         {[[30, 40], [450, 60], [420, 380], [60, 390], [180, 20], [470, 250], [12, 260], [300, 400]].map(([x, y], i) => (
-          <circle key={i} cx={x} cy={y} r={i % 3 ? 1.2 : 1.8} fill="#4ADE80" className="landing-twinkle" style={{ animationDelay: `${i * 0.4}s` }} />
+          <circle key={i} cx={x} cy={y} r={i % 3 ? 1.2 : 1.8} fill="#F25C05" className="landing-twinkle" style={{ animationDelay: `${i * 0.4}s` }} />
         ))}
 
         <circle cx={cx} cy={cy} r="120" fill="url(#core)" />
         <g className="landing-spin" style={{ transformOrigin: `${cx}px ${cy}px` }}>
-          <circle cx={cx} cy={cy} r="158" fill="none" stroke="#E4F046" strokeOpacity="0.25" strokeDasharray="2 10" />
-          <circle cx={cx} cy={cy} r="96" fill="none" stroke="#4ADE80" strokeOpacity="0.15" strokeDasharray="30 14" />
+          <circle cx={cx} cy={cy} r="158" fill="none" stroke="#F25C05" strokeOpacity="0.25" strokeDasharray="2 10" />
+          <circle cx={cx} cy={cy} r="96" fill="none" stroke="#F25C05" strokeOpacity="0.15" strokeDasharray="30 14" />
         </g>
 
         {NODES.map((n, i) => {
           const path = `M${n.x} ${n.y} L${cx} ${cy}`;
           return (
             <g key={i}>
-              <path d={path} stroke={n.waiting ? '#ffffff' : '#E4F046'} strokeOpacity={n.waiting ? 0.2 : 0.7} strokeWidth="2" strokeDasharray="4 8" className={n.waiting ? '' : 'landing-flow'} />
+              <path d={path} style={{ stroke: n.waiting ? 'var(--color-base-content)' : '#F25C05' }} strokeOpacity={n.waiting ? 0.2 : 0.7} strokeWidth="2" strokeDasharray="4 8" className={n.waiting ? '' : 'landing-flow'} />
               {!n.waiting && (
-                <circle r="5" fill="#4ADE80" filter="url(#glow)">
+                <circle r="5" fill="#F25C05" filter="url(#glow)">
                   <animateMotion dur="2.6s" begin={`${i * 0.5}s`} repeatCount="indefinite" path={path} keyPoints="0;1" keyTimes="0;1" />
                   <animate attributeName="opacity" values="0;1;1;0" dur="2.6s" begin={`${i * 0.5}s`} repeatCount="indefinite" />
                 </circle>
@@ -452,33 +452,33 @@ function HeroArt() {
 
         {/* the listing */}
         <g filter="url(#glow)">
-          <polygon points="240,160 283,185 283,235 240,260 197,235 197,185" fill="url(#hex)" stroke="#4ADE80" strokeOpacity="0.6" strokeWidth="1.5" />
+          <polygon points="240,160 283,185 283,235 240,260 197,235 197,185" fill="url(#hex)" stroke="#F25C05" strokeOpacity="0.6" strokeWidth="1.5" />
         </g>
-        <g fill="none" stroke="#0E0A06" strokeWidth="2.5">
+        <g fill="none" stroke="#FFFFFF" strokeWidth="2.5">
           <ellipse cx={cx} cy="194" rx="20" ry="7" />
           <path d="M220 194v28c0 4 9 7 20 7s20-3 20-7v-28 M220 208c0 4 9 7 20 7s20-3 20-7" />
         </g>
-        <rect x="166" y="269" width="148" height="32" rx="16" fill="#0E0A06" fillOpacity="0.7" stroke="#E4F046" strokeOpacity="0.5" />
-        <text x={cx} y="289" textAnchor="middle" fontSize="12" fontWeight="600" fill="#4ADE80">Dataset · 2,000 sats</text>
+        <rect x="146" y="266" width="188" height="38" rx="19" fill="#1A1A1A" fillOpacity="0.92" stroke="#F25C05" strokeOpacity="0.5" />
+        <text x={cx} y="290" textAnchor="middle" fontSize="12" fontWeight="600" fill="#FFFFFF">Dataset · 2,000 sats</text>
 
         {NODES.map((n, i) => (
           <g key={i} className="landing-float" style={{ animationDelay: `${i * 0.7}s` }} opacity={n.waiting ? 0.55 : 1}>
-            <circle cx={n.x} cy={n.y} r="26" fill="#0e0e0e" stroke={n.waiting ? '#ffffff' : '#E4F046'} strokeOpacity={n.waiting ? 0.35 : 1} strokeWidth="2" strokeDasharray={n.waiting ? '4 4' : undefined} />
+            <circle cx={n.x} cy={n.y} r="26" style={{ fill: 'var(--color-base-200)', stroke: n.waiting ? 'var(--color-base-content)' : '#F25C05' }} strokeOpacity={n.waiting ? 0.35 : 1} strokeWidth="2" strokeDasharray={n.waiting ? '4 4' : undefined} />
             {n.bot ? (
-              <g fill="none" stroke="#4ADE80" strokeWidth="2" strokeLinecap="round">
+              <g fill="none" stroke="#F25C05" strokeWidth="2" strokeLinecap="round">
                 <rect x={n.x - 11} y={n.y - 8} width="22" height="17" rx="5" />
                 <path d={`M${n.x} ${n.y - 8}v-5`} />
-                <circle cx={n.x} cy={n.y - 14} r="1.5" fill="#4ADE80" />
-                <circle cx={n.x - 5} cy={n.y} r="1.5" fill="#4ADE80" />
-                <circle cx={n.x + 5} cy={n.y} r="1.5" fill="#4ADE80" />
+                <circle cx={n.x} cy={n.y - 14} r="1.5" fill="#F25C05" />
+                <circle cx={n.x - 5} cy={n.y} r="1.5" fill="#F25C05" />
+                <circle cx={n.x + 5} cy={n.y} r="1.5" fill="#F25C05" />
               </g>
             ) : (
-              <g fill="none" stroke="#4ADE80" strokeWidth="2" strokeLinecap="round">
+              <g fill="none" stroke="#F25C05" strokeWidth="2" strokeLinecap="round">
                 <circle cx={n.x} cy={n.y - 5} r="6" />
                 <path d={`M${n.x - 11} ${n.y + 12}c1-6 5-9 11-9s10 3 11 9`} />
               </g>
             )}
-            <text x={n.x} y={n.y + 44} textAnchor="middle" fontSize="11" fontWeight="600" fill={n.waiting ? '#ffffff' : '#E4F046'}>{n.label}</text>
+            <text x={n.x} y={n.y + 44} textAnchor="middle" fontSize="11" fontWeight="600" style={{ fill: n.waiting ? 'var(--color-base-content)' : '#F25C05' }}>{n.label}</text>
           </g>
         ))}
       </svg>

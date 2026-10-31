@@ -20,8 +20,8 @@ export default function RequestCard({ request, user, now, onAnswer, onChange }) 
           </div>
         </div>
       </div>
-      {request.description && <p className="mt-3 whitespace-pre-line text-sm text-white/90">{request.description}</p>}
-      <div className="mt-3 flex items-center gap-2 text-xs text-white/70">
+      {request.description && <p className="mt-3 whitespace-pre-line text-sm text-base-content/90">{request.description}</p>}
+      <div className="mt-3 flex items-center gap-2 text-xs text-base-content/70">
         Buyer <UserLink person={request.buyerProfile} you={request.mine} />
       </div>
       {user && open && (

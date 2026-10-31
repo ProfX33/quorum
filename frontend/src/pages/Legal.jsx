@@ -125,18 +125,18 @@ export default function Legal({ page, user, onSignIn, onLogout, nav }) {
         {content ? (
           <article className="min-w-0">
             <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-            <p className="mt-2 text-sm text-white/50">Last updated {content.updated}</p>
+            <p className="mt-2 text-sm text-base-content/50">Last updated {content.updated}</p>
             <div className="mt-8 space-y-8">
               {content.sections.map(([heading, body]) => (
                 <section key={heading}>
                   <h2 className="text-lg font-semibold text-secondary">{heading}</h2>
-                  <div className="mt-2 space-y-2 leading-relaxed text-white/75">{body}</div>
+                  <div className="mt-2 space-y-2 leading-relaxed text-base-content/75">{body}</div>
                 </section>
               ))}
             </div>
           </article>
         ) : (
-          <p className="text-white/70">This page does not exist.</p>
+          <p className="text-base-content/70">This page does not exist.</p>
         )}
       </main>
     </>

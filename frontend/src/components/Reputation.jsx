@@ -26,7 +26,7 @@ export default function Reputation({ value = 0, size = 'sm', showValue = false }
           <Star key={i} fill={Math.min(1, Math.max(0, points - i))} size={SIZES[size]} />
         ))}
       </span>
-      {showValue && <span className="tabular-nums text-xs text-white/70">{value}/{MAX_REPUTATION}</span>}
+      {showValue && <span className="tabular-nums text-xs text-base-content/70">{value}/{MAX_REPUTATION}</span>}
     </span>
   );
 }

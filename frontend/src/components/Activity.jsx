@@ -20,10 +20,10 @@ const LABEL = {
 export function ActivityList({ events }) {
   if (events.length === 0) return <div role="alert" className="alert alert-soft text-sm"><span>Nothing here yet.</span></div>;
   return (
-    <ul className="divide-y divide-white/10">
+    <ul className="divide-y divide-base-content/10">
       {events.map((e, i) => (
         <li key={`${e.type}-${e.at}-${e.txid ?? i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-          <time className="font-mono text-xs text-white/60">{new Date(e.at).toLocaleTimeString()}</time>
+          <time className="font-mono text-xs text-base-content/60">{new Date(e.at).toLocaleTimeString()}</time>
           <KindBadge kind={e.actorKind} />
           <a href={profileHref(e.actor)} className="link link-hover font-mono text-xs" title={e.actor}>{shortKey(e.actor)}</a>
           <span>

@@ -155,7 +155,7 @@ function BidsTable({ bids, own, now }) {
               <td className="text-right tabular-nums">{b.amount != null ? sats(b.amount) : '—'}</td>
               {own && <td className="text-right tabular-nums">{sats(b.maxPrice)}</td>}
               <td>{b.txid ? <TxLink {...b} /> : '—'}</td>
-              <td className="whitespace-nowrap text-white/70">{date(b.createdAt)}</td>
+              <td className="whitespace-nowrap text-base-content/70">{date(b.createdAt)}</td>
             </tr>
           ))}
         </tbody>
@@ -199,7 +199,7 @@ function TransactionsTable({ transactions }) {
                 <TxLink {...t} />
                 {!t.seen && <span className="badge badge-ghost badge-xs ml-2">unconfirmed</span>}
               </td>
-              <td className="whitespace-nowrap text-white/70">{date(t.at)}</td>
+              <td className="whitespace-nowrap text-base-content/70">{date(t.at)}</td>
             </tr>
           ))}
         </tbody>
@@ -238,8 +238,8 @@ export default function Profile({ identityKey, user, onSignIn, onLogout, onUserC
   // Own profile edits show at once, before the next refresh.
   const person = own ? { ...data?.user, ...user } : data?.user;
   const tabs = data && [
-    ['offers', 'Sell offers', data.offers.length],
-    ['requests', 'Buy requests', data.requests.length],
+    ['offers', 'Offers', data.offers.length],
+    ['requests', 'Requests', data.requests.length],
     ['bids', 'Bids', data.bids.length],
     ['transactions', 'Transactions', data.transactions.length],
   ];
@@ -263,16 +263,16 @@ export default function Profile({ identityKey, user, onSignIn, onLogout, onUserC
               <Avatar person={person} size="lg" />
               <div className="min-w-0 flex-1">
                 <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold">
-                  {person.name || <span className="text-white/60">Unnamed {person.kind === 'agent' ? 'agent' : 'user'}</span>}
+                  {person.name || <span className="text-base-content/60">Unnamed {person.kind === 'agent' ? 'agent' : 'user'}</span>}
                   <span className="badge badge-sm badge-outline">{person.kind}</span>
                   {own && <span className="badge badge-sm badge-primary">you</span>}
                 </h1>
                 <div className="mt-2 flex items-center gap-2 text-sm">
-                  <span className="text-white/70">Reputation</span>
+                  <span className="text-base-content/70">Reputation</span>
                   <Reputation value={person.reputation} size="lg" showValue />
                 </div>
-                <p className="mt-1 break-all font-mono text-xs text-white/70">{person.identityKey}</p>
-                <p className="mt-1 text-xs text-white/70">Member since {new Date(person.createdAt).toLocaleDateString()}</p>
+                <p className="mt-1 break-all font-mono text-xs text-base-content/70">{person.identityKey}</p>
+                <p className="mt-1 text-xs text-base-content/70">Member since {new Date(person.createdAt).toLocaleDateString()}</p>
                 {own && (
                   <div className="mt-4">
                     {editing ? (

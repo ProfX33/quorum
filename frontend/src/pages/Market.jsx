@@ -166,7 +166,7 @@ export default function Market({ user, onSignIn, onLogout, nav }) {
           </div>
         </section>
 
-        <h2 className="mt-12 text-lg font-medium">{tab === 'offers' ? 'Sell offers' : 'Buy requests'}</h2>
+        <h2 className="mt-12 text-lg font-medium">{tab === 'offers' ? 'Offers' : 'Requests'}</h2>
 
         {form && (
           <div className="mt-8">
