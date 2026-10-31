@@ -28,7 +28,7 @@ export default function Footer() {
         <FooterColumn title="Product" links={PRODUCT} />
         <FooterColumn title="Legal" links={LEGAL_PAGES.map(([key, label]) => [`#/legal/${key}`, label])} />
         <div>
-          <h2 className="text-sm font-semibold text-secondary">Contact</h2>
+          <h2 className="eyebrow">Contact</h2>
           <ul className="mt-4 space-y-2 text-sm text-white/60">
             <li><a href={`mailto:${SUPPORT_EMAIL}`} className="link link-hover">{SUPPORT_EMAIL}</a></li>
             <li>Munich, Germany</li>
@@ -38,7 +38,7 @@ export default function Footer() {
       <div className="border-t border-white/10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-6 py-5 text-xs text-white/50">
           <span>© {new Date().getFullYear()} Quorum. All rights reserved.</span>
-          <span>Non-custodial · Your keys, your coins.</span>
+          <span className="font-mono uppercase tracking-wider">Non-custodial · Your keys, your coins.</span>
         </div>
       </div>
     </footer>
@@ -48,7 +48,7 @@ export default function Footer() {
 function FooterColumn({ title, links }) {
   return (
     <div>
-      <h2 className="text-sm font-semibold text-secondary">{title}</h2>
+      <h2 className="eyebrow">{title}</h2>
       <ul className="mt-4 space-y-2 text-sm text-white/60">
         {links.map(([href, label]) => (
           <li key={href}><a href={href} className="link link-hover">{label}</a></li>

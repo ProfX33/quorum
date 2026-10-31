@@ -3,35 +3,35 @@
   themes: false;
 }
 
-/* Palette: Deep space blue #002642, Wisteria blue #7EA3CC, Cream #F3F9D2, Pitch black #0E0A06 */
+/* Palette: Ember coral #FF5A36, Peach #FFB199, Warm black #0E0504, Ash #CFC6C2 */
 @plugin "daisyui/theme" {
   name: "market";
   default: true;
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: #002642;
-  --color-base-200: #001d33;
-  --color-base-300: #0E0A06;
-  --color-base-content: #ffffff;
-  --color-primary: #7EA3CC;
-  --color-primary-content: #0E0A06;
-  --color-secondary: #F3F9D2;
-  --color-secondary-content: #0E0A06;
-  --color-accent: #F3F9D2;
-  --color-accent-content: #0E0A06;
-  --color-neutral: #0E0A06;
-  --color-neutral-content: #ffffff;
-  --color-info: #7EA3CC;
-  --color-info-content: #0E0A06;
-  --color-success: #F3F9D2;
-  --color-success-content: #0E0A06;
-  --color-warning: #F3F9D2;
-  --color-warning-content: #0E0A06;
-  --color-error: #ff8a7a;
-  --color-error-content: #0E0A06;
-  --radius-box: 0.5rem;
-  --radius-field: 0.375rem;
-  --radius-selector: 0.375rem;
+  --color-base-100: #120706;
+  --color-base-200: #0c0403;
+  --color-base-300: #1d0c09;
+  --color-base-content: #fbf3f0;
+  --color-primary: #ff5a36;
+  --color-primary-content: #140504;
+  --color-secondary: #ffb199;
+  --color-secondary-content: #140504;
+  --color-accent: #ff8a5c;
+  --color-accent-content: #140504;
+  --color-neutral: #1d0c09;
+  --color-neutral-content: #fbf3f0;
+  --color-info: #ffb199;
+  --color-info-content: #140504;
+  --color-success: #9fe3b4;
+  --color-success-content: #0c0403;
+  --color-warning: #ffc26b;
+  --color-warning-content: #0c0403;
+  --color-error: #ff4d6d;
+  --color-error-content: #0c0403;
+  --radius-box: 0.25rem;
+  --radius-field: 0.125rem;
+  --radius-selector: 0.125rem;
   /* daisyUI sizes borders and badge padding from these; without them badges lose their padding */
   --size-selector: 0.25rem;
   --size-field: 0.25rem;
@@ -40,14 +40,85 @@
   --noise: 0;
 }
 
+@theme {
+  --font-sans: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+}
+
 body {
-  color: #fff;
+  color: var(--color-base-content);
+  background: var(--color-base-100);
+  font-family: var(--font-sans);
   margin: 0;
   -webkit-font-smoothing: antialiased;
 }
 
 code {
-  font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 45%, transparent);
+}
+
+/* Buttons in the style of the brand: square, thin border, a tinted fill and a glow on hover */
+.btn {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.3s, transform 0.2s;
+}
+.btn:not(.btn-ghost):not(.btn-link):hover { transform: translateY(-1px); }
+.btn-primary:not(.btn-outline) {
+  --btn-bg: color-mix(in oklab, var(--color-primary) 22%, transparent);
+  --btn-fg: #ffd9cc;
+  --btn-border: var(--color-primary);
+  box-shadow: inset 0 0 18px color-mix(in oklab, var(--color-primary) 25%, transparent);
+}
+.btn-primary:not(.btn-outline):hover {
+  --btn-bg: var(--color-primary);
+  --btn-fg: var(--color-primary-content);
+  box-shadow: 0 0 28px color-mix(in oklab, var(--color-primary) 55%, transparent);
+}
+
+/* Small mono caps label above headings, like a spec sheet */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+
+/* Landing page: ticker, glowing bars and scroll reveal */
+@keyframes ticker { to { transform: translateX(-50%); } }
+.ticker { animation: ticker 40s linear infinite; }
+
+@keyframes bar-pulse {
+  0%, 100% { transform: scaleY(var(--lo)); }
+  50% { transform: scaleY(1); }
+}
+.glow-bar {
+  transform-origin: bottom;
+  background: linear-gradient(to top,
+    color-mix(in oklab, #ff5a36 0%, transparent) 0%,
+    #ff5a36 18%, #ffe7de 42%, #ff7a52 62%, #b9311a 82%, transparent 100%);
+  filter: blur(1.5px);
+  animation: bar-pulse var(--dur) ease-in-out var(--delay) infinite;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: var(--reveal-delay, 0s);
+}
+.reveal.is-visible { opacity: 1; transform: none; }
+
+/* A soft spotlight that follows the pointer over a card */
+.spotlight {
+  background-image: radial-gradient(320px circle at var(--mx, 50%) var(--my, -100%),
+    color-mix(in oklab, var(--color-primary) 16%, transparent), transparent 70%);
 }
 
 /* Landing page art */
@@ -60,5 +131,6 @@ code {
 .landing-float { animation: landing-float 4s ease-in-out infinite; }
 .landing-twinkle { animation: landing-twinkle 3s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .landing-flow, .landing-spin, .landing-float, .landing-twinkle { animation: none; }
+  .landing-flow, .landing-spin, .landing-float, .landing-twinkle, .ticker, .glow-bar { animation: none; }
+  .reveal { opacity: 1; transform: none; transition: none; }
 }

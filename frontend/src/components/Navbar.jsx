@@ -40,23 +40,23 @@ export default function Navbar({ user, onSignIn, onLogout, nav, counts }) {
   }
 
   return (
-    <header className="navbar sticky top-0 z-10 max-md:flex-wrap border-b border-white/10 bg-base-200 px-6">
+    <header className="navbar sticky top-0 z-10 max-md:flex-wrap border-b border-white/10 bg-base-200/75 px-6 backdrop-blur-xl">
       <div className="navbar-start">
         <a href="#/" aria-label="Home" onClick={() => nav.goHome()}>
           <img src="/logo.svg" alt="Quorum" className="h-8" />
         </a>
       </div>
       <nav className="navbar-center order-last w-full overflow-x-auto md:order-none md:w-auto">
-        <ul role="tablist" className="menu menu-horizontal gap-2 px-1">
+        <ul role="tablist" className="menu menu-horizontal gap-2 px-1 font-mono text-xs uppercase tracking-wider">
           {TABS.map(([key, label]) => (
             <li key={key}>
               <button role="tab" onClick={() => nav.openTab(key)} className={nav.activeTab === key
-                  ? 'bg-primary! text-primary-content! hover:bg-primary/85! focus:bg-primary!'
+                  ? 'bg-primary/15! text-primary! shadow-[inset_0_0_0_1px_var(--color-primary)] hover:bg-primary/25! focus:bg-primary/15!'
                   : 'bg-transparent! hover:bg-white/10! focus:bg-transparent! focus-visible:bg-white/10!'}>
                 {label}
                 {counts[key] !== undefined && <span
                     className={`badge badge-sm min-w-6 border-0 px-1.5 font-medium tabular-nums ${
-                      nav.activeTab === key ? 'bg-black/20 text-primary-content' : 'bg-white/15 text-base-content'
+                      nav.activeTab === key ? 'bg-primary text-primary-content' : 'bg-white/15 text-base-content'
                     }`}
                   >
                     {counts[key]}
