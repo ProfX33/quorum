@@ -66,7 +66,7 @@ export default function App() {
   if (user === undefined) return null;
   const signIn = signingIn && !user;
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className={`flex min-h-screen flex-col ${signIn ? '' : 'lg:pl-72'}`}>
       <div className="flex flex-1 flex-col">
         {signIn ? <Login onLogin={(u) => (setUser(u), setSigningIn(false))} onCancel={() => setSigningIn(false)} /> : <>
       {route.page === 'home' && <Landing user={user} onSignIn={() => setSigningIn(true)} onLogout={() => setUser(null)} nav={nav} />}
